@@ -373,6 +373,10 @@ public partial class SigNetClient
         switch (tid)
         {
             case Tid.RtEndpointCount:
+                // TODO (spec 6.8.2 vs 8.6.2): data endpoints are numbered 1..N, while a Sender's
+                // level lanes use endpoints 1..63999 (the universe here). The count reports only
+                // the Node endpoints from SigNetDeviceInfo, so a pure Sender reports 0, and a Node
+                // endpoint n shares its sequence lane with universe n's level stream.
                 items.Add((tid, UInt16Bytes((ushort)info.Endpoints.Count)));
                 break;
 

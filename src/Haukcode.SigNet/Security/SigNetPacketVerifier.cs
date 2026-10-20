@@ -79,6 +79,8 @@ public sealed class SigNetPacketVerifier
         Tuid = tuid;
         this.replayProtection = replayProtection;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        // TODO (spec 8.6.4): the window starts on link-up; without link-state events the
+        // library starts it at creation and the host can restart it with SignalLinkUp.
         this.linkUpTimestamp = this.timeProvider.GetTimestamp();
     }
 

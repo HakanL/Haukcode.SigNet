@@ -140,6 +140,8 @@ public partial class SigNetClient
         return null;
     }
 
+    // TODO (spec 11.8.1): code 0x0002 "Replay Attack Detected" overlaps 0x0006 (session regression)
+    // and 0x0007 (sequence violation); the specific codes are reported and 0x0002 is never raised.
     private void ReportRejected(VerifyResult result, IPAddress source)
     {
         var code = result switch
