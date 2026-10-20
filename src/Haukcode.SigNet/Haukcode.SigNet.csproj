@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <AssemblyName>Haukcode.SigNet</AssemblyName>
+    <PackageId>Haukcode.SigNet</PackageId>
+    <GenerateAssemblyConfigurationAttribute>false</GenerateAssemblyConfigurationAttribute>
+    <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+    <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+    <Version>0.1.0</Version>
+    <Authors>Hakan Lindestaf</Authors>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Title>Haukcode.SigNet</Title>
+    <PackageProjectUrl>https://github.com/HakanL/Haukcode.SigNet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/HakanL/Haukcode.SigNet</RepositoryUrl>
+    <Description>A Sig-Net (secure CoAP-based DMX512 over IP) library for .NET: Sender role and receive-only Node role</Description>
+    <Copyright>Copyright (c) 2026 Hakan Lindestaf</Copyright>
+    <PackageTags>Sig-Net;SigNet;DMX;DMX512;CoAP;Lighting</PackageTags>
+    <PackageReleaseNotes>
+      0.1.0 - Initial implementation against Sig-Net Protocol Framework V1.14
+    </PackageReleaseNotes>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>NUGET_README.md</PackageReadmeFile>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\NUGET_README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Haukcode.SigNet.UnitTest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Haukcode.Network" Version="1.0.29" />
+    <PackageReference Include="Haukcode.HighPerfComm" Version="1.0.53" />
+    <PackageReference Include="HdrHistogram" Version="2.5.0" />
+    <PackageReference Include="System.Reactive" Version="7.0.0" />
+  </ItemGroup>
+
+</Project>

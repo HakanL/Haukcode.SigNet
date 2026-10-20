@@ -1,0 +1,10 @@
+{
+  "solution": {
+    "path": "Haukcode.SigNet.sln",
+    "projects": [
+      "example\Haukcode.SigNet.ConsoleExample.csproj",
+      "src\Haukcode.SigNet\Haukcode.SigNet.csproj",
+      "test\Haukcode.SigNet.UnitTest.csproj"
+    ]
+  }
+}
