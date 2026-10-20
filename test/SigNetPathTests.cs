@@ -124,6 +124,17 @@ public class SigNetPathTests
     }
 
     [Theory]
+    [InlineData("239.254.0.1", true)]
+    [InlineData("239.255.0.1", true)]
+    [InlineData("224.0.0.1", true)]
+    [InlineData("192.168.1.10", false)]
+    [InlineData("127.0.0.1", false)]
+    public void IsMulticast_CoversTheWholeRange(string address, bool expected)
+    {
+        Assert.Equal(expected, SigNetMulticast.IsMulticast(IPAddress.Parse(address)));
+    }
+
+    [Theory]
     [InlineData("local", true)]
     [InlineData("Hall_A-2.x~", true)]
     [InlineData("", false)]
