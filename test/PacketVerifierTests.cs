@@ -177,6 +177,23 @@ public class PacketVerifierTests : IDisposable
     }
 
     [Fact]
+    public void NetworkshopOpenModePoll_WithoutSessionAndSequence_IsOpenModeRejected()
+    {
+        // Captured from NETworkshop v0.11: an Open Mode poll that omits Session-ID and Seq-Num
+        var datagram = Convert.FromHexString("5002000ab77369672d6e6574027631056c6f63616c04706f6c6ce1070401d8135379e3c2311e0000d2130000d053ff000100195379e3c2311e53790001000000000000ffffffffffffffff03");
+
+        Assert.Equal(VerifyResult.OpenModeRejected, Verify(datagram));
+    }
+
+    [Fact]
+    public void SecureModeWithoutSessionAndSequence_IsMalformed()
+    {
+        var datagram = Convert.FromHexString("5002000ab77369672d6e6574027631056c6f63616c04706f6c6ce1070400d8135379e3c2311e0000d2130000d053ff000100195379e3c2311e53790001000000000000ffffffffffffffff03");
+
+        Assert.Equal(VerifyResult.Malformed, Verify(datagram));
+    }
+
+    [Fact]
     public void UnknownSecurityMode_IsDropped()
     {
         var datagram = Build(SigNetPath.Level("local", 1), 5, 1);

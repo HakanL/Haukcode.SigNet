@@ -146,7 +146,12 @@ public static class SigNetPacketParser
             position += length;
         }
 
-        if ((seen & SeenAllRequired) != SeenAllRequired)
+        // TODO (spec 8.3): Open Mode and beacons "shall transmit 0x00000000" for Session-ID and
+        // Seq-Num, but NETworkshop v0.11 omits both options in its Open Mode polls. Neither mode is
+        // ever verified here, so the omission is tolerated (read as zero) to classify the packet.
+        const int SeenUnauthenticatedRequired = SeenSecurityMode | SeenSenderId | SeenMfgCode;
+        bool unauthenticated = (seen & SeenSecurityMode) != 0 && securityMode is SecurityMode.Open or SecurityMode.Beacon;
+        if ((seen & (unauthenticated ? SeenUnauthenticatedRequired : SeenAllRequired)) != (unauthenticated ? SeenUnauthenticatedRequired : SeenAllRequired))
             return SigNetParseResult.MissingSecurityOption;
 
         // Auth width follows the security mode (spec 8.3). Beacons may omit Auth entirely
