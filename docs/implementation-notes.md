@@ -155,6 +155,12 @@ Each one is also a `TODO (spec x.y)` comment in the code.
     section 11 is used.
 13. **TID_UNIVERSE target.** Listed as Target Endpoint "Data" but sent to
     /node/{tuid}/0. Sent as specified, on lane 0.
+14. **Replay table size (8.6 step 10c vs 8.6.2).** A Node must track at least
+    32 Sender-ID records, but every universe is its own sender lane, so one
+    console sending 100 universes needs 100 records and a 32-record table
+    saturates (and drops the rest as event 0x0005). The library default is the
+    spec minimum; a recorder or router consuming many universes passes a
+    larger `replayTableCapacity` (MagnusEngine's SigNetStream uses 8,192).
 
 ## Reference implementation notes
 
