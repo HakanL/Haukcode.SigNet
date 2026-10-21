@@ -79,6 +79,7 @@ public static class TidCatalogue
             new TidInfo(Tid.Osc, "TID_OSC", TidTarget.RootAndData, false, null, 1, Coap.MaxPayloadLength - 4),
 
             // 11.3
+            // TODO (spec 11.3 vs Appendix C): Appendix C targets the RDM command and response at Data only, 11.3.1 and 11.3.2 at Root & Data
             new TidInfo(Tid.RdmCommand, "TID_RDM_COMMAND", TidTarget.RootAndData, false, null, 26, 257),
             new TidInfo(Tid.RdmResponse, "TID_RDM_RESPONSE", TidTarget.RootAndData, false, null, 26, 257),
             new TidInfo(Tid.RdmTodControl, "TID_RDM_TOD_CONTROL", TidTarget.Data, false, null, 1, 1),
@@ -114,6 +115,7 @@ public static class TidCatalogue
             new TidInfo(Tid.RtRoleCapability, "TID_RT_ROLE_CAPABILITY", TidTarget.Root, true, QueryLevel.Full, 4, 4),
             new TidInfo(Tid.RtReboot, "TID_RT_REBOOT", TidTarget.Root, false, null, 5, 5),
             new TidInfo(Tid.RtModelName, "TID_RT_MODEL_NAME", TidTarget.Root, true, QueryLevel.Full, 1, 65),
+            // TODO (spec): the SDK defines TID_RT_SCOPE (0x060C), V1.14 does not; left out until the spec defines it
             new TidInfo(Tid.RtOtwCapability, "TID_RT_OTW_CAPABILITY", TidTarget.Root, true, QueryLevel.Full, 3, 3),
 
             // 11.7

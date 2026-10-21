@@ -151,9 +151,12 @@ Each one is also a `TODO (spec x.y)` comment in the code.
     rejected, the one deliberate difference from the reference.
 11. **Key file names (7.5).** The PDF renders `"sig - net_equal_keys"`; taken
     as `sig-net_equal_keys` and `sig-net_guest_keys`.
-12. **Appendix C vs section 11.** TID_POLL_REPLY and TID_DG_MESSAGE targets,
-    and TID_OSC's length (Variable vs 1 to 255), differ between the two;
-    section 11 is used.
+12. **Appendix C vs section 11.** The TID_POLL_REPLY and TID_DG_MESSAGE
+    targets, TID_OSC's length (Variable vs 1 to 255), and the TID_RDM_COMMAND
+    and TID_RDM_RESPONSE targets (Appendix C: Data; 11.3.1 and 11.3.2: Root
+    and Data, Root limited to firmware updates) differ between the two;
+    section 11 is used. RDM is not implemented yet, so the RDM targets have
+    no effect today.
 13. **TID_UNIVERSE target.** Listed as Target Endpoint "Data" but sent to
     /node/{tuid}/0. Sent as specified, on lane 0.
 14. **Replay table size (8.6 step 10c vs 8.6.2).** A Node must track at least
@@ -162,13 +165,18 @@ Each one is also a `TODO (spec x.y)` comment in the code.
     saturates (and drops the rest as event 0x0005). The library default is the
     spec minimum; a recorder or router consuming many universes passes a
     larger `replayTableCapacity` (MagnusEngine's SigNetStream uses 8,192).
+15. **TID_RT_SCOPE (0x060C).** The SDK defines it (Operational URI scope, a
+    UTF-8 string of up to 32 bytes) but V1.14 does not, and Appendix C skips
+    0x060C. Is it a TID the next spec version adds, or an SDK leftover? Until
+    the spec defines it, the catalogue leaves it out and it is skipped as an
+    unknown TID.
 
 ## Reference implementation notes
 
 - The SDK README (V0.6 notes) still says 100 folding groups and TTL 16; its
   code and the spec use 109 and 32.
-- The SDK defines `TID_RT_SCOPE` (0x060C), which is not in the V1.14 spec;
-  the catalogue leaves it out, so it is skipped as an unknown TID.
+- The SDK defines `TID_RT_SCOPE` (0x060C), which is not in the V1.14 spec
+  (open question 15).
 - The Rust port (Pixout-Lighting/sig-net, crate `sig-net` 0.8.0, last
   commit 2026-05-13) targets spec V1.0 and is a packet toolkit, not a
   device: CoAP and TLV encoders, a CoAP parser, key derivation, the
