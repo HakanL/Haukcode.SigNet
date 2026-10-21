@@ -129,9 +129,10 @@ public class SigNetPathTests
     [InlineData("224.0.0.1", true)]
     [InlineData("192.168.1.10", false)]
     [InlineData("127.0.0.1", false)]
+    // Haukcode.Network before 1.1 matched only 239.255.0.0/16, which misclassified Sig-Net groups
     public void IsMulticast_CoversTheWholeRange(string address, bool expected)
     {
-        Assert.Equal(expected, SigNetMulticast.IsMulticast(IPAddress.Parse(address)));
+        Assert.Equal(expected, Haukcode.Network.Utils.IsMulticast(IPAddress.Parse(address)));
     }
 
     [Theory]

@@ -79,20 +79,6 @@ public static class SigNetMulticast
         };
     }
 
-    /// <summary>
-    /// True for an IPv4 multicast address, 224.0.0.0/4. (Haukcode.Network's IsMulticast only
-    /// matches sACN's 239.255.0.0/16.)
-    /// </summary>
-    public static bool IsMulticast(IPAddress address)
-    {
-        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-            return address.IsIPv6Multicast;
-
-        Span<byte> bytes = stackalloc byte[4];
-
-        return address.TryWriteBytes(bytes, out _) && (bytes[0] & 0xF0) == 0xE0;
-    }
-
     internal static void CheckUniverse(ushort universe)
     {
         if (universe < SigNetUri.MinUniverse || universe > SigNetUri.MaxUniverse)

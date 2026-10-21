@@ -417,7 +417,7 @@ public partial class SigNetClient
         // Only touched on the receive thread
         if (!this.receiveDestinationCache.TryGetValue(destinationIP, out var destination))
         {
-            destination = SigNetMulticast.IsMulticast(destinationIP) ? null : new IPEndPoint(destinationIP, this.localEndPoint.Port);
+            destination = Haukcode.Network.Utils.IsMulticast(destinationIP) ? null : new IPEndPoint(destinationIP, this.localEndPoint.Port);
             this.receiveDestinationCache.Add(destinationIP, destination);
         }
 

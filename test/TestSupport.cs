@@ -108,7 +108,7 @@ internal sealed class TestClient : IDisposable
         {
             Sent.Enqueue((destination, datagram));
 
-            return SigNetMulticast.IsMulticast(destination.Address);
+            return Haukcode.Network.Utils.IsMulticast(destination.Address);
         };
         Client.OnError.Subscribe(Errors.Enqueue);
     }

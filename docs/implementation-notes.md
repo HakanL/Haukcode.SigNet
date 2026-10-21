@@ -90,9 +90,10 @@ handlers rather than reshape the client.
   table wins.
 - **SET.** Every SET on /manager is refused without a reply. GETs are
   answered read-only from `SigNetDeviceInfo`.
-- **Multicast detection.** `Haukcode.Network.Utils.IsMulticast` only matches
-  239.255.0.0/16 (sACN), so `SigNetMulticast.IsMulticast` checks
-  224.0.0.0/4. Worth fixing in Haukcode.Network too.
+- **Multicast detection.** Haukcode.Network 1.0.x's `Utils.IsMulticast`
+  only matched 239.255.0.0/16 (sACN) and misclassified Sig-Net's
+  239.254.x.x groups as unicast. Fixed in Haukcode.Network 1.1.30 (it now
+  checks 224.0.0.0/4 and IPv6 multicast), which this library requires.
 - **IGMP cap.** On Linux, memberships live on separate sockets (as in
   SACNClient) and a new membership socket is opened when one hits
   `igmp_max_memberships`. A refused join still leaves the universe joined

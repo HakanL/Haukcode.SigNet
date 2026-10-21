@@ -289,7 +289,7 @@ public partial class SigNetClient
     /// </summary>
     private IPEndPoint ResolveDestination(in SigNetPath path, IPAddress? destination)
     {
-        var address = destination != null && !SigNetMulticast.IsMulticast(destination) ? destination : SigNetMulticast.GetAddress(path);
+        var address = destination != null && !Haukcode.Network.Utils.IsMulticast(destination) ? destination : SigNetMulticast.GetAddress(path);
 
         return this.endPointCache.GetOrAdd(address, static (address, port) => new IPEndPoint(address, port), this.localEndPoint.Port);
     }
