@@ -356,6 +356,85 @@ public class SigNetClientTests
     }
 
     [Fact]
+    public async Task InputAndTriggerSubscriptions_AreIndependentAndReported()
+    {
+        using var test = new TestClient();
+
+        test.Client.JoinUniverse(5);
+        await test.Client.SendLevels(5, new byte[] { 1 }, destination: IPAddress.Loopback);
+        Assert.Equal(SubscribeModes.DmxData, (await Wait.For(test.Received)).SubscribeMode);
+
+        // Trigger joins are idempotent and add to the input subscription
+        test.Client.JoinUniverseForTrigger(5);
+        test.Client.JoinUniverseForTrigger(5);
+        await test.Client.SendLevels(5, new byte[] { 2 }, destination: IPAddress.Loopback);
+        Assert.Equal(SubscribeModes.DmxData | SubscribeModes.Trigger, (await Wait.For(test.Received)).SubscribeMode);
+
+        // Dropping the input keeps the trigger, so frames still arrive
+        test.Client.DropUniverse(5);
+        Assert.False(test.Client.IsJoined(5));
+        await test.Client.SendLevels(5, new byte[] { 3 }, destination: IPAddress.Loopback);
+        Assert.Equal(SubscribeModes.Trigger, (await Wait.For(test.Received)).SubscribeMode);
+
+        // With nothing left the universe is filtered out
+        test.Client.DropAllTriggerUniverses();
+        test.Client.DropUniverseForTrigger(5);
+        Assert.Equal(SubscribeModes.None, test.Client.GetSubscription(5));
+        await test.Client.SendLevels(5, new byte[] { 4 }, destination: IPAddress.Loopback);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.True(test.Received.IsEmpty);
+    }
+
+    [Fact]
+    public void DropAllInputUniverses_KeepsTriggers()
+    {
+        using var test = new TestClient();
+
+        test.Client.JoinUniverse(1);
+        test.Client.JoinUniverse(2);
+        test.Client.JoinUniverseForTrigger(2);
+
+        test.Client.DropAllInputUniverses();
+
+        Assert.Equal(SubscribeModes.None, test.Client.GetSubscription(1));
+        Assert.Equal(SubscribeModes.Trigger, test.Client.GetSubscription(2));
+        test.Client.JoinUniverse(1);
+    }
+
+    [Fact]
+    public async Task StopAllUniverses_AnnouncesLeaveForEveryActiveUniverse()
+    {
+        using var test = new TestClient();
+
+        await test.Client.SendLevels(1, new byte[] { 1 });
+        await test.Client.SendLevels(2, new byte[] { 1 });
+        await Wait.Until(() => test.Sent.Count(s => s.Destination.Address.Equals(SigNetMulticast.NodeSend)) >= 2);
+        test.Sent.Clear();
+
+        test.Client.StopAllUniverses();
+
+        var (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        var announcements = ReadTlvs(test.Decode(datagram).Packet.Payload).Select(t => UniverseAnnouncement.Read(t.Value)).ToList();
+        Assert.Equal(new ushort[] { 1, 2 }, announcements.Select(a => a.Universe).Order());
+        Assert.All(announcements, a => Assert.Equal(UniverseCommand.Leave, a.Command));
+        Assert.Empty(test.Client.ActiveUniverses);
+
+        // Nothing left to stop
+        test.Client.StopAllUniverses();
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.Empty(test.Sent);
+    }
+
+    [Fact]
+    public void Diagnostics_ReportTheReceiveSocket()
+    {
+        using var test = new TestClient();
+
+        Assert.True(test.Client.ActualReceiveBufferSize > 0);
+        Assert.False(test.Client.KernelReceiveTimestampsObserved && !test.Client.KernelReceiveTimestampsActive);
+    }
+
+    [Fact]
     public async Task SendLevels_ValidatesArguments()
     {
         using var test = new TestClient();

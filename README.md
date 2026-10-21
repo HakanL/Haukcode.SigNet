@@ -1,4 +1,4 @@
-# Haukcode.SigNet
+# Haukcode.SigNet [![NuGet Version](http://img.shields.io/nuget/v/Haukcode.SigNet.svg?style=flat)](https://www.nuget.org/packages/Haukcode.SigNet/)
 
 A cross-platform .NET library for the Sig-Net lighting control protocol.
 

@@ -82,6 +82,13 @@ handlers rather than reshape the client.
 - **Sync hold.** Per sender TUID (see the open question below). Held frames
   are delivered just before the sync packet that releases them, flagged
   `Synchronized`. A timeout flush is also flagged `Synchronized`.
+- **Subscriptions** mirror Haukcode.sACN: `JoinUniverse`/`DropUniverse` for
+  input (a second join throws), `JoinUniverseForTrigger`/`DropUniverseForTrigger`
+  for triggers (idempotent), `DropAllInputUniverses`/`DropAllTriggerUniverses`,
+  and `SubscribeMode` on each received frame, so a MagnusEngine stream can
+  follow `AcnStream`. Groups are reference counted across both modes.
+- **Stopping.** `StopAllUniverses` sends one TID_UNIVERSE Leave for every
+  active universe; `Dispose` sends nothing, so call it first.
 - **Merging** is left to the application: frames carry the Sender-ID,
   priority and timestamps it needs. Stream loss after 3 s is an event only.
 - **Discovery levels.** Poll replies follow the 11.9 QUERY_LEVEL table: the

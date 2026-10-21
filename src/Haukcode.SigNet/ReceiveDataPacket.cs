@@ -2,6 +2,21 @@ using System.Net;
 
 namespace Haukcode.SigNet;
 
+/// <summary>
+/// What a universe is joined for (same meaning as in Haukcode.sACN).
+/// </summary>
+[Flags]
+public enum SubscribeModes
+{
+    None = 0,
+
+    /// <summary>Input: <see cref="SigNetClient.JoinUniverse"/>.</summary>
+    DmxData = 1,
+
+    /// <summary>Triggers: <see cref="SigNetClient.JoinUniverseForTrigger"/>.</summary>
+    Trigger = 2
+}
+
 public enum ReceiveDataKind
 {
     /// <summary>A verified TID_LEVEL frame for a joined universe.</summary>
@@ -70,6 +85,11 @@ public class ReceiveDataPacket
     /// 250 ms sync timeout), false when applied as it arrived (spec 10.7.2).
     /// </summary>
     public bool Synchronized { get; set; }
+
+    /// <summary>
+    /// What the frame's universe is joined for. None for sync, which belongs to no universe.
+    /// </summary>
+    public SubscribeModes SubscribeMode { get; set; }
 
     public ReceiveDataPacket Clone()
     {

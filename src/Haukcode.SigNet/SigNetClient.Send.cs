@@ -168,6 +168,29 @@ public partial class SigNetClient
     }
 
     /// <summary>
+    /// Stop transmitting every active universe: one TID_UNIVERSE Leave announcement covering all
+    /// of them. Call it before <see cref="Client{TSendData,TPacketType}.Dispose()"/> when stopping
+    /// gracefully; disposing alone does not announce anything.
+    /// </summary>
+    public void StopAllUniverses()
+    {
+        lock (this.sendLock)
+        {
+            if (this.activeUniverses.Count == 0)
+                return;
+
+            var announcements = new List<UniverseAnnouncement>(this.activeUniverses.Count);
+            foreach (ushort universe in this.activeUniverses)
+                announcements.Add(new UniverseAnnouncement(universe, UniverseCommand.Leave, null, universe));
+
+            this.activeUniverses.Clear();
+
+            if (IsOperational)
+                QueueUniverseAnnouncementLocked(announcements);
+        }
+    }
+
+    /// <summary>
     /// Send TID_SYNC to /sync on &lt;mult_time&gt;, signed with Ks (spec 10.7.1). It goes out as an
     /// ordering barrier, so it cannot overtake level packets still queued on any sender shard, and
     /// the sender thread holds it until at least 5 ms after the last level datagram was handed to

@@ -48,6 +48,15 @@ await client.SendSync();
 
 Received packets are reused once the writer returns; keep `packet.Clone()` if you queue them.
 
+## Key Methods
+
+- `SendLevels()` / `SendSync()`: transmit; the first frame for a universe announces it
+- `StopUniverse()` / `StopAllUniverses()`: announce TID_UNIVERSE Leave
+- `JoinUniverse()` / `DropUniverse()`: receive a universe as input
+- `JoinUniverseForTrigger()` / `DropUniverseForTrigger()`: receive a universe for triggers
+- `OnUniverseLost`, `OnSecurityEvent`, `GetVerifyCounts()`: monitoring
+- `LevelRefreshPolicy`: the spec 10.6.3 repeat and 1 Hz keep-alive rules
+
 ## License conditions
 
 Sig-Net is owned by Singularity (UK) Ltd and licensed royalty-free. Products built with this

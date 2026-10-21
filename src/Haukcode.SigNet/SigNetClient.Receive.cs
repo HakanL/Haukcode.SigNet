@@ -47,8 +47,8 @@ public partial class SigNetClient
 
     // What each universe is joined for, indexed by universe id. Written under subscriptionLock,
     // read on the receive thread without it (whole-element writes).
-    private readonly bool[] joinedUniverses = new bool[ushort.MaxValue + 1];
-    private int joinedUniverseCount;
+    private readonly SubscribeModes[] subscriptions = new SubscribeModes[ushort.MaxValue + 1];
+    private int subscribedUniverseCount;
 
     // Receive state, guarded by relay.Lock: keyed by (Sender-ID, universe) and by sender TUID
     private readonly Dictionary<(ulong SenderId, ushort Universe), StreamState> streams = [];
@@ -60,9 +60,10 @@ public partial class SigNetClient
     private readonly Dictionary<IPAddress, IPEndPoint?> receiveDestinationCache = [];
 
     /// <summary>
-    /// Receive a universe: joins its folded multicast group (shared with every universe 109
-    /// apart) and, for the first universe, &lt;mult_time&gt; for sync. Packets for universes that
-    /// are not joined are discarded by URI even when they arrive on a shared group (spec 9.2.3).
+    /// Receive a universe as input: joins its folded multicast group (shared with every universe
+    /// 109 apart) and, for the first subscribed universe, &lt;mult_time&gt; for sync. Packets for
+    /// universes that are not subscribed are discarded by URI even when they arrive on a shared
+    /// group (spec 9.2.3). Throws if the universe is already joined as input.
     ///
     /// If the kernel refuses the multicast join (IGMP membership cap), the universe still counts
     /// as joined, so unicast to it is received, and the SocketException is thrown.
@@ -74,19 +75,17 @@ public partial class SigNetClient
 
         lock (this.subscriptionLock)
         {
-            if (this.joinedUniverses[universe])
+            if ((this.subscriptions[universe] & SubscribeModes.DmxData) != 0)
                 throw new InvalidOperationException($"Universe {universe} is already joined");
 
-            this.joinedUniverses[universe] = true;
-            this.joinedUniverseCount++;
-
-            if (this.joinedUniverseCount == 1)
-                AddMembership(SigNetMulticast.Time);
-
-            AddMembership(SigNetMulticast.GetUniverseAddress(universe));
+            Subscribe(universe, SubscribeModes.DmxData);
         }
     }
 
+    /// <summary>
+    /// Stop receiving a universe as input. Throws if it is not joined as input; the multicast
+    /// group is left once nothing else needs it.
+    /// </summary>
     public void DropUniverse(ushort universe)
     {
         if (this.listenSocket == null)
@@ -94,19 +93,101 @@ public partial class SigNetClient
 
         lock (this.subscriptionLock)
         {
-            if (!this.joinedUniverses[universe])
+            if ((this.subscriptions[universe] & SubscribeModes.DmxData) == 0)
                 throw new InvalidOperationException($"Universe {universe} is not joined");
 
-            this.joinedUniverses[universe] = false;
-            this.joinedUniverseCount--;
-
-            DropMembership(SigNetMulticast.GetUniverseAddress(universe));
-            if (this.joinedUniverseCount == 0)
-                DropMembership(SigNetMulticast.Time);
+            Unsubscribe(universe, SubscribeModes.DmxData);
         }
     }
 
-    public bool IsJoined(ushort universe) => this.joinedUniverses[universe];
+    /// <summary>
+    /// Receive a universe for triggers. Joining again is fine; input and trigger subscriptions
+    /// to the same universe are independent.
+    /// </summary>
+    public void JoinUniverseForTrigger(ushort universe)
+    {
+        SigNetMulticast.CheckUniverse(universe);
+        ObjectDisposedException.ThrowIf(this.listenSocket == null, this);
+
+        lock (this.subscriptionLock)
+        {
+            if ((this.subscriptions[universe] & SubscribeModes.Trigger) == 0)
+                Subscribe(universe, SubscribeModes.Trigger);
+        }
+    }
+
+    /// <summary>
+    /// Stop receiving a universe for triggers. Dropping one that is not joined is fine.
+    /// </summary>
+    public void DropUniverseForTrigger(ushort universe)
+    {
+        if (this.listenSocket == null)
+            return;
+
+        lock (this.subscriptionLock)
+        {
+            if ((this.subscriptions[universe] & SubscribeModes.Trigger) != 0)
+                Unsubscribe(universe, SubscribeModes.Trigger);
+        }
+    }
+
+    public void DropAllInputUniverses() => DropAll(SubscribeModes.DmxData);
+
+    public void DropAllTriggerUniverses() => DropAll(SubscribeModes.Trigger);
+
+    /// <summary>
+    /// True when the universe is joined as input.
+    /// </summary>
+    public bool IsJoined(ushort universe) => (this.subscriptions[universe] & SubscribeModes.DmxData) != 0;
+
+    /// <summary>
+    /// What the universe is currently joined for.
+    /// </summary>
+    public SubscribeModes GetSubscription(ushort universe) => this.subscriptions[universe];
+
+    // Add a mode, joining the groups if nothing had subscribed the universe. Called under subscriptionLock.
+    private void Subscribe(ushort universe, SubscribeModes mode)
+    {
+        var current = this.subscriptions[universe];
+        this.subscriptions[universe] = current | mode;
+
+        if (current != SubscribeModes.None)
+            return;
+
+        if (++this.subscribedUniverseCount == 1)
+            AddMembership(SigNetMulticast.Time);
+
+        AddMembership(SigNetMulticast.GetUniverseAddress(universe));
+    }
+
+    // Remove a mode, leaving the groups once nothing needs them. Called under subscriptionLock.
+    private void Unsubscribe(ushort universe, SubscribeModes mode)
+    {
+        var remaining = this.subscriptions[universe] & ~mode;
+        this.subscriptions[universe] = remaining;
+
+        if (remaining != SubscribeModes.None)
+            return;
+
+        DropMembership(SigNetMulticast.GetUniverseAddress(universe));
+        if (--this.subscribedUniverseCount == 0)
+            DropMembership(SigNetMulticast.Time);
+    }
+
+    private void DropAll(SubscribeModes mode)
+    {
+        if (this.listenSocket == null)
+            return;
+
+        lock (this.subscriptionLock)
+        {
+            for (int universe = SigNetUri.MinUniverse; universe <= SigNetUri.MaxUniverse; universe++)
+            {
+                if ((this.subscriptions[universe] & mode) != 0)
+                    Unsubscribe((ushort)universe, mode);
+            }
+        }
+    }
 
     protected override ReceiveDataPacket? TryParseObject(ReadOnlyMemory<byte> buffer, double timestampMS, IPEndPoint sourceIP, IPAddress destinationIP)
     {
@@ -160,7 +241,8 @@ public partial class SigNetClient
     private ReceiveDataPacket? ReceiveLevels(ushort universe, double timestampMS, IPEndPoint source, IPAddress destinationIP)
     {
         // Folded groups carry other universes too; the URI is the filter (spec 9.2.3)
-        if (!this.joinedUniverses[universe])
+        var subscription = this.subscriptions[universe];
+        if (subscription == SubscribeModes.None)
             return null;
 
         ReadOnlySpan<byte> priority = default;
@@ -247,6 +329,7 @@ public partial class SigNetClient
             packet.Priority = stream.Priority;
             packet.HasPriority = stream.HasPriority;
             packet.Synchronized = false;
+            packet.SubscribeMode = subscription;
 
             return packet;
         }
@@ -288,6 +371,7 @@ public partial class SigNetClient
             packet.Priority = 0;
             packet.HasPriority = false;
             packet.Synchronized = true;
+            packet.SubscribeMode = SubscribeModes.None;
 
             return packet;
         }
@@ -316,6 +400,7 @@ public partial class SigNetClient
             packet.Priority = stream.Priority;
             packet.HasPriority = stream.HasPriority;
             packet.Synchronized = true;
+            packet.SubscribeMode = this.subscriptions[universe];
 
             try
             {

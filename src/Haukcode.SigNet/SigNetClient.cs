@@ -62,9 +62,15 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
     /// </summary>
     public const int MulticastTtl = 32;
 
+    /// <summary>
+    /// Requested socket receive buffer, in bytes. Compare with <see cref="ActualReceiveBufferSize"/>
+    /// to see whether the OS capped it (net.core.rmem_max on Linux).
+    /// </summary>
+    public const int ReceiveBufferSize = 680 * 20 * 200;
+
     // Room for the largest legal message (1,400 bytes) plus slack; send buffers come from the same pool
     private const int PacketBufferSize = 1500;
-    private const int SocketBufferSize = 680 * 20 * 200;
+    private const int SendBufferSize = 680 * 20 * 200;
     private static readonly IPEndPoint blankEndpoint = new(IPAddress.Any, 0);
 
     private readonly SigNetKeys keys;
@@ -151,7 +157,7 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
                 var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                 this.sendSockets[i] = socket;
 
-                socket.SendBufferSize = SocketBufferSize;
+                socket.SendBufferSize = SendBufferSize;
                 Haukcode.Network.Utils.SetSocketOptions(socket);
                 socket.DontFragment = true;
                 socket.MulticastLoopback = multicastLoopback;
@@ -238,9 +244,32 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
     public IObservable<SecurityEvent> OnSecurityEvent => this.securityEventSubject.AsObservable();
 
     /// <summary>
-    /// True when packets are stamped by the kernel on arrival rather than by the receive loop.
+    /// True when packets are stamped by the kernel on arrival (Linux SO_TIMESTAMPNS, Windows
+    /// SIO_TIMESTAMPING, macOS SO_TIMESTAMP) rather than by the receive loop.
     /// </summary>
     public bool KernelReceiveTimestampsActive => this.timestampedReceiver != null;
+
+    /// <summary>
+    /// True once a received packet actually carried a kernel timestamp. On Windows the socket
+    /// option can be accepted while the adapter driver never stamps, so this is the
+    /// after-the-fact answer where <see cref="KernelReceiveTimestampsActive"/> only means requested.
+    /// </summary>
+    public bool KernelReceiveTimestampsObserved => this.timestampedReceiver?.KernelTimestampsObserved == true;
+
+    /// <summary>
+    /// The receive buffer the OS granted, or null while not receiving.
+    /// </summary>
+    public int? ActualReceiveBufferSize
+    {
+        get
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                // Linux reports the internal buffer size, which is double the requested size
+                return this.listenSocket?.ReceiveBufferSize / 2;
+            else
+                return this.listenSocket?.ReceiveBufferSize;
+        }
+    }
 
     /// <summary>
     /// How many received datagrams ended with each verification result since the client started.
@@ -338,7 +367,7 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
     protected override void InitializeReceiveSocket()
     {
         this.listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        this.listenSocket.ReceiveBufferSize = SocketBufferSize;
+        this.listenSocket.ReceiveBufferSize = ReceiveBufferSize;
 
         Haukcode.Network.Utils.SetSocketOptions(this.listenSocket);
 
