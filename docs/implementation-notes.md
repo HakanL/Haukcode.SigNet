@@ -155,3 +155,17 @@ Each one is also a `TODO (spec x.y)` comment in the code.
   code and the spec use 109 and 32.
 - The SDK defines `TID_RT_SCOPE` (0x060C), which is not in the V1.14 spec;
   the catalogue leaves it out, so it is skipped as an unknown TID.
+- The Rust port (Pixout-Lighting/sig-net, crate `sig-net` 0.8.0, last
+  commit 2026-05-13) targets spec V1.0 and is a packet toolkit, not a
+  device: CoAP and TLV encoders, a CoAP parser, key derivation, the
+  passphrase rules and HMAC helpers, plus packet builders for levels,
+  announcements, polls, beacons, node_lost, timecode, preview and manager
+  commands, and a C FFI. It has no anti-replay logic (its receiver state
+  structs are unused), no TLV length validation, no sync packet builder,
+  no priority in its level builder, and no discovery, sync or stream-loss
+  state machines. Against V1.14 it still writes the 7-byte pre-V1.07
+  TID_UNIVERSE (V1.14 is 9 bytes), so strict V1.14 receivers, this library
+  included, drop those packets as malformed. It also has no TID_SET_REPLY
+  and no Appendix G vectors. Its sequence counter sends 0xFFFFFFFF before
+  wrapping to 1, unlike this library's reading of open question 2. Its
+  option encoding (fixed-width opaque values) and 109-group folding match.
