@@ -28,10 +28,14 @@ public class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--beacon"))
+            return await RunBeaconAsync(args);
+
         string? passphrase = GetArgument(args, "--passphrase");
         if (passphrase == null)
         {
             Console.WriteLine("Usage: ConsoleExample --passphrase <passphrase> [--scope local] [--interface <ip>] [--universe 1] [--manufacturer 0x7FF0] [--sync] [--listen-only] [--seconds 0]");
+            Console.WriteLine("       ConsoleExample --beacon [--interface <ip>] [--manufacturer 0x7FF0] [--seconds 0]");
 
             return 1;
         }
@@ -138,6 +142,48 @@ public class Program
         await sender;
         client.StopUniverse(universe);
         await Task.Delay(100);
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Beacon Mode: what a device without keys sends, an unauthenticated presence beacon every 5 s
+    /// that Managers list as offboarded.
+    /// </summary>
+    private static async Task<int> RunBeaconAsync(string[] args)
+    {
+        ushort manufacturer = ParseHex16(GetArgument(args, "--manufacturer") ?? "0x7FF0");
+        var localAddress = GetArgument(args, "--interface") is string address
+            ? IPAddress.Parse(address)
+            : Haukcode.Network.Utils.GetFirstBindAddress().IPAddress ?? IPAddress.Loopback;
+        int seconds = int.Parse(GetArgument(args, "--seconds") ?? "0", CultureInfo.InvariantCulture);
+        var tuid = Tuid.CreateDynamic(manufacturer);
+
+        var deviceInfo = new SigNetDeviceInfo(SoemCode.Create(manufacturer, 0x0001), "Haukcode.SigNet example", Environment.MachineName)
+        {
+            Roles = SigNetRoles.Sender | SigNetRoles.Node
+        };
+
+        using var beacon = new SigNetBeacon(tuid, deviceInfo, localAddress, multicastLoopback: true);
+        beacon.SendFailed += (_, e) => Console.WriteLine($"Beacon failed: {e.Message}");
+        Console.WriteLine($"Beaconing as offboarded device {tuid} from {localAddress} every {SigNetBeacon.Interval.TotalSeconds} s, Ctrl+C to stop");
+
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+        if (seconds > 0)
+            cts.CancelAfter(TimeSpan.FromSeconds(seconds));
+
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
 
         return 0;
     }

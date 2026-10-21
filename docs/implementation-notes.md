@@ -20,6 +20,7 @@ the Sig-Net Protocol Framework V1.14 (2026-10-17). Layer 1 of
 | Sender role | 10.6, 10.7, 11.2.6 | `SigNetClient.Send.cs`, `LevelRefreshPolicy.cs` |
 | Discovery, announcements, security events, Lost Mode | 10.2, 10.9 | `SigNetClient.Discovery.cs` |
 | Receive side of the Node role | 10.6, 10.6.4, 10.7.2 | `SigNetClient.Receive.cs` |
+| Beacon Mode for an offboarded device | 7.2.2, 10.2.1 | `SigNetBeacon.cs` |
 
 Out of scope for this version, with room left for them: RDM TIDs,
 TID_TIMECODE, TID_OSC, TID_PREVIEW sending, the Manager role, Open Mode,

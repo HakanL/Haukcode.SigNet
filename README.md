@@ -49,6 +49,8 @@ Implemented:
 5. Node role, receive only: verified levels with the universe priority
    (Constrained Node Fallback), sync hold-and-release, stream loss events,
    read-only replies about data endpoints, Lost Mode.
+6. Beacon Mode: `SigNetBeacon` announces a device that has no keys yet, so
+   Managers can list it for onboarding.
 
 Not yet: RDM, timecode, OSC, the Manager role, Open Mode, SNOW, SET
 commands.

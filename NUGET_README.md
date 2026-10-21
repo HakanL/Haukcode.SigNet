@@ -56,6 +56,7 @@ Received packets are reused once the writer returns; keep `packet.Clone()` if yo
 - `JoinUniverseForTrigger()` / `DropUniverseForTrigger()`: receive a universe for triggers
 - `OnUniverseLost`, `OnSecurityEvent`, `GetVerifyCounts()`: monitoring
 - `LevelRefreshPolicy`: the spec 10.6.3 repeat and 1 Hz keep-alive rules
+- `SigNetBeacon`: Beacon Mode for a device that is not onboarded yet
 
 ## License conditions
 
