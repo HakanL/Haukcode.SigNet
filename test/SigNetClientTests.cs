@@ -153,6 +153,11 @@ public class SigNetClientTests
         var securityEvent = await Wait.For(securityEvents);
         Assert.Equal(SecurityEventCode.SequenceViolation, securityEvent.Code);
         Assert.Equal(IPAddress.Loopback, securityEvent.SourceAddress);
+
+        // Also as the generic 0x0002, the only replay code the SDK and its managers know
+        var generic = await Wait.For(securityEvents);
+        Assert.Equal(SecurityEventCode.ReplayDetected, generic.Code);
+        Assert.Equal(IPAddress.Loopback, generic.SourceAddress);
         Assert.Equal(1, test.Client.GetVerifyCounts()[VerifyResult.SequenceReplay]);
         Assert.True(test.Received.IsEmpty);
 

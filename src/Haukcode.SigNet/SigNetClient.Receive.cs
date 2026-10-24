@@ -221,8 +221,9 @@ public partial class SigNetClient
         return null;
     }
 
-    // TODO (spec 11.8.1): code 0x0002 "Replay Attack Detected" overlaps 0x0006 (session regression)
-    // and 0x0007 (sequence violation); the specific codes are reported and 0x0002 is never raised.
+    // TODO (spec 11.8.1): code 0x0002 "Replay Attack Detected" overlaps 0x0006 (session regression),
+    // 0x0007 (sequence violation) and 0x0005 (table saturated). The specific code is reported, and
+    // 0x0002 as well, since the SDK and the managers built on it only know 0x0002.
     private void ReportRejected(VerifyResult result, IPAddress source)
     {
         var code = result switch
@@ -234,8 +235,12 @@ public partial class SigNetClient
             _ => (SecurityEventCode)0
         };
 
-        if (code != 0)
-            RaiseSecurityEvent(code, source);
+        if (code == 0)
+            return;
+
+        RaiseSecurityEvent(code, source);
+        if (code != SecurityEventCode.HmacFailure)
+            RaiseSecurityEvent(SecurityEventCode.ReplayDetected, source);
     }
 
     private ReceiveDataPacket? ReceiveLevels(ushort universe, double timestampMS, IPEndPoint source, IPAddress destinationIP)
