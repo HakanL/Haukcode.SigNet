@@ -137,7 +137,7 @@ public class DiscoveryTests
     }
 
     [Fact]
-    public async Task Get_IsAnsweredReadOnly_SetIsRefusedWithoutReply()
+    public async Task Get_IsAnsweredReadOnly_ChangingSetIsRefusedWithoutReply()
     {
         using var test = new TestClient(NodeInfo);
         // Past the 2 s post-link-up window, so the SET is refused for being a SET
@@ -161,6 +161,50 @@ public class DiscoveryTests
         await Task.Delay(100, TestContext.Current.CancellationToken);
         Assert.Empty(test.Sent);
         Assert.Equal("Input 1", test.Client.DeviceInfo.Endpoints[0].Label);
+    }
+
+    // TID_EP_LABEL "Input 1": encoding byte 0x00, then the ASCII text
+    private const string InputOneLabelTlv = "09020008" + "00496E7075742031";
+
+    [Fact]
+    public async Task SameValueSet_IsEchoedWithATrailingSetReply()
+    {
+        using var test = new TestClient(NodeInfo);
+        await Task.Delay(Security.SigNetPacketVerifier.BootstrapWindow, TestContext.Current.CancellationToken);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        test.Sent.Clear();
+
+        // SET TID_EP_LABEL to its current value (spec 10.4.2 "Valid SET with no State Change")
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString(InputOneLabelTlv)));
+
+        var (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        var (path, packet) = test.Decode(datagram);
+        Assert.Equal(SigNetPath.Node("local", test.Tuid, 1), path);
+        var tlvs = SigNetClientTests.ReadTlvs(packet.Payload);
+        Assert.Equal(new[] { Tid.EpLabel, Tid.SetReply }, tlvs.Select(t => t.Tid));
+        Assert.Equal("Input 1", TextPayload.ReadLabel(tlvs[0].Value));
+
+        // Reserved flags, then the CHANGE_COUNT, unchanged
+        Assert.Equal(new byte[] { 0x00, 0x00, 0x00 }, tlvs[1].Value);
+        Assert.Equal(0, test.Client.DeviceInfo.ChangeCount);
+    }
+
+    [Fact]
+    public async Task SetWithOneChangingValue_IsRefusedAsAWhole()
+    {
+        using var test = new TestClient(NodeInfo);
+        await Task.Delay(Security.SigNetPacketVerifier.BootstrapWindow, TestContext.Current.CancellationToken);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        test.Sent.Clear();
+
+        // The same label plus a new universe: the universe would change, so nothing is answered
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString(InputOneLabelTlv + "09010002" + "0007")));
+        // And a root TID sent to a data endpoint is not a parameter of that endpoint
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("06070001" + "00")));
+
+        await Wait.Until(() => test.Client.GetVerifyCounts()[Security.VerifyResult.Accepted] == 2);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.Empty(test.Sent);
     }
 
     [Fact]

@@ -36,6 +36,9 @@ public partial class SigNetClient
     /// </summary>
     public static readonly TimeSpan EndpointSpacingDelay = TimeSpan.FromMilliseconds(1);
 
+    // TID_SET_REPLY: reserved flags byte, then the 16-bit CHANGE_COUNT (spec 11.1.3)
+    private const int SetReplyLength = 3;
+
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan SecurityEventInterval = TimeSpan.FromSeconds(1);
 
@@ -203,6 +206,8 @@ public partial class SigNetClient
             return;
 
         // Any valid poll ends Lost Mode, whichever Manager sent it (spec 10.2.6)
+        // TODO (spec 10.2.6): unclear whether other verified Manager traffic should end it too;
+        // only a poll that includes this TUID does here
         Interlocked.Exchange(ref this.lastPollTimestamp, this.timeProvider.GetTimestamp());
 
         var endpoints = GetReplyEndpoints(poll.Endpoint);
@@ -230,27 +235,36 @@ public partial class SigNetClient
 
     /// <summary>
     /// A verified packet on /manager/{tuid}/{endpoint}. Parameter Queries (all TLVs zero length)
-    /// are answered from the same read-only state as polls. Any SET is refused as a whole with no
-    /// reply, since this library exposes no settable parameters (spec 10.1.3, 10.4.2).
+    /// are answered from the same read-only state as polls. A packet with any non-empty TLV is a
+    /// SET transaction, see <see cref="ReceiveSet"/>.
     /// </summary>
-    // TODO (spec 11 "Mandated" vs 10.1.3): section 11 says a Node "shall silently ignore the
-    // invalid parameter update while continuing to accurately report its fixed state", while
-    // 10.1.3 says an unsupported SET rejects the transaction with no reply. The no-reply reading
-    // is used.
     private void ReceiveManagerCommand(ushort endpoint, ReadOnlySpan<byte> payload)
     {
         var requested = new HashSet<ushort>();
+        var sets = new List<(ushort Tid, byte[] Value)>();
         var reader = new TlvReader(payload);
         while (reader.TryRead(out ushort tid, out var value))
         {
-            if (!value.IsEmpty)
-                return;
-
-            requested.Add(tid);
+            if (value.IsEmpty)
+                requested.Add(tid);
+            else
+                sets.Add((tid, value.ToArray()));
         }
 
         var endpoints = GetReplyEndpoints(endpoint);
-        if (requested.Count == 0 || endpoints.Count == 0)
+        if (endpoints.Count == 0)
+            return;
+
+        if (sets.Count > 0)
+        {
+            // A query mixed into a SET transaction is not a valid parameter value: reject it all
+            if (requested.Count == 0)
+                ReceiveSet(endpoint, endpoints, sets);
+
+            return;
+        }
+
+        if (requested.Count == 0)
             return;
 
         StartReply(async token =>
@@ -264,6 +278,95 @@ public partial class SigNetClient
                 SendEndpointReply(endpoints[i], requested.Contains, startWithPollReply: false);
             }
         });
+    }
+
+    /// <summary>
+    /// A SET transaction (spec 10.4.2). This library's parameters are read-only, so a SET can only
+    /// be the "Valid SET with no State Change" path: when every value equals the current state, the
+    /// TLVs are echoed with a trailing TID_SET_REPLY carrying the unchanged CHANGE_COUNT, per
+    /// endpoint. Any value that would change the state, or any TID the endpoint does not report,
+    /// rejects the whole transaction with no reply (10.4.2 path 1).
+    /// </summary>
+    // TODO (spec 11 "Mandated" vs 10.1.3): section 11 says a Node "shall silently ignore the
+    // invalid parameter update while continuing to accurately report its fixed state", while
+    // 10.1.3 and 10.4.2 reject the transaction with no reply. The no-reply reading is used for
+    // a SET that would change a read-only value, as the SDK node does.
+    private void ReceiveSet(ushort endpoint, List<ushort> endpoints, List<(ushort Tid, byte[] Value)> sets)
+    {
+        var info = this.deviceInfo;
+        var replies = new List<(ushort Endpoint, List<(ushort Tid, byte[] Value)> Items)>();
+        var matched = new HashSet<ushort>();
+
+        foreach (ushort target in endpoints)
+        {
+            var applicable = target == 0 ? rootTids : dataTids;
+            var items = new List<(ushort Tid, byte[] Value)>();
+            foreach (var (tid, value) in sets)
+            {
+                if (Array.IndexOf(applicable, tid) < 0)
+                {
+                    // A broadcast SET skips the endpoints a TID does not apply to; a targeted one is invalid
+                    if (endpoint != PollRequest.AllEndpoints)
+                        return;
+
+                    continue;
+                }
+
+                var current = new List<(ushort Tid, byte[] Value)>();
+                AddTlvs(current, tid, target, info);
+                if (current.Count != 1 || !current[0].Value.AsSpan().SequenceEqual(value))
+                    return;
+
+                items.Add((tid, value));
+                matched.Add(tid);
+            }
+
+            if (items.Count > 0)
+                replies.Add((target, items));
+        }
+
+        // A broadcast SET of a TID that no endpoint reports is invalid too
+        var setTids = new HashSet<ushort>();
+        foreach (var (tid, _) in sets)
+            setTids.Add(tid);
+
+        if (matched.Count != setTids.Count)
+            return;
+
+        StartReply(async token =>
+        {
+            for (int i = 0; i < replies.Count; i++)
+            {
+                if (i > 0)
+                    await Task.Delay(EndpointSpacingDelay, this.timeProvider, token).ConfigureAwait(false);
+
+                token.ThrowIfCancellationRequested();
+                SendSetReply(replies[i].Endpoint, replies[i].Items, info.ChangeCount);
+            }
+        });
+    }
+
+    /// <summary>
+    /// The Set-Response for one endpoint: the parameter TLVs, then TID_SET_REPLY as the final TLV
+    /// (spec 10.4.2, 11.1.3). Sent as one packet; it is a reply to one Manager packet, so it fits.
+    /// </summary>
+    private void SendSetReply(ushort endpoint, List<(ushort Tid, byte[] Value)> items, ushort changeCount)
+    {
+        var buffer = new byte[Coap.MaxPayloadLength];
+        var writer = new TlvWriter(buffer);
+        foreach (var (tid, value) in items)
+        {
+            if (!writer.CanWrite(value.Length + TlvReader.HeaderLength + SetReplyLength))
+                return;
+
+            writer.Write(tid, value);
+        }
+
+        var reply = writer.Reserve(Tid.SetReply, SetReplyLength);
+        reply[0] = 0x00;
+        BinaryPrimitives.WriteUInt16BigEndian(reply[1..], changeCount);
+
+        QueueSigned(SigNetPath.Node(Scope, Tuid, endpoint), endpoint, writer.Written.ToArray());
     }
 
     private List<ushort> GetReplyEndpoints(ushort endpoint)
