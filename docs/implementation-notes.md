@@ -116,7 +116,12 @@ handlers rather than reshape the client.
 
 ## Open spec questions
 
-Each one is also a `TODO (spec x.y)` comment in the code.
+Each one is also a `TODO (spec x.y)` comment in the code. Checked against
+the reference C++ SDK (v0.7) and the Sig-Net Discord (#spec-feedback and
+#snactest) in October 2026; what those show is noted per question. The SDK
+has no TID_SYNC handling, bootstrap window, idle-repeat logic or
+TID_UNIVERSE, so questions 1, 8, 9 and 13 cannot be checked against it, and
+none of the four has come up on the Discord.
 
 1. **Sync matching (10.7.2).** Sync is matched to the active sender by the
    full 8-byte Sender-ID, but every universe is its own lane and a TID_SYNC
@@ -124,23 +129,40 @@ Each one is also a `TODO (spec x.y)` comment in the code.
    Implemented as a match on the sender TUID, with sync sent on lane 0.
 2. **Sequence wrap (8.3).** "When the counter reaches 0xFFFFFFFF" is read as
    0xFFFFFFFF never being sent: the session advances and every lane
-   restarts at 1.
+   restarts at 1. The SDK applications do the same. Its bare
+   `IncrementSequence` helper sends 0xFFFFFFFF before wrapping to 1, as the
+   Rust port does.
 3. **Open Mode option values (8.3).** Open Mode and beacons "shall transmit
    0x00000000" for Session-ID and Seq-Num, but NETworkshop v0.11 omits both
    options in its Open Mode polls (the dissector flags them as malformed).
-   The parser tolerates the omission for modes 0x01 and 0xFF only.
+   The parser tolerates the omission for modes 0x01 and 0xFF only. The SDK
+   parser requires both options, 4 bytes each, in every mode, so a sender
+   must not omit them; this library always writes them.
 4. **Beacon Auth option (10.2.1 vs Appendix A).** 10.2.1 says Sig-Net-Auth
-   is omitted, Appendix A note 1 says zero length. Written as zero length,
-   which the SDK parser requires; both are accepted on receive.
+   is omitted, Appendix A note 1 says zero length, and 8.3 also says 32 zero
+   bytes (reported on the Discord by Vari-Lite, August 2026). Written as zero
+   length, which the SDK parser requires (it rejects any other length for
+   modes 0x01 and 0xFF); omitted and zero length are both accepted on
+   receive.
 5. **Unsupported SET (11 vs 10.1.3).** Section 11 says a Node silently
    ignores an update it cannot apply while reporting its fixed state; 10.1.3
-   says the whole transaction is rejected with no reply. No reply is sent.
+   and 10.4.2 say the whole transaction is rejected with no reply. The
+   library's parameters are read-only: a SET that would change one, or names
+   a TID the endpoint does not report, is rejected with no reply, as the SDK
+   node does. A SET whose values all equal the current state is the 10.4.2
+   "Valid SET with no State Change" path and is echoed with a trailing
+   TID_SET_REPLY carrying the unchanged CHANGE_COUNT; SNACtest test 1348
+   checks exactly that on TID_RT_DEVICE_LABEL.
 6. **Endpoint numbering (6.8.2 vs 8.6.2).** Data endpoints are 1..N, Sender
    lanes 1..63999. TID_RT_ENDPOINT_COUNT reports only the Node endpoints, so
    a pure Sender reports 0, and Node endpoint n shares a sequence lane with
    universe n's level stream.
 7. **Security event codes (11.8.1).** 0x0002 "Replay Attack Detected"
-   overlaps 0x0006 and 0x0007. The specific codes are reported.
+   overlaps 0x0005, 0x0006 and 0x0007. The SDK defines only 0x0001 to
+   0x0004 and reports every freshness failure, including a full replay
+   table, as 0x0002. The library reports the specific code and 0x0002 as
+   well, so managers built on either reading see the event. Asked on the
+   Discord by NETworkshop's developer in July 2026, unanswered.
 8. **Link-up (8.6.4).** The bootstrap window starts on link-up. The library
    starts it at construction; hosts that see link state call `SignalLinkUp`.
 9. **Idle repeats (10.6.3).** "Three identical packets containing the final
@@ -165,11 +187,23 @@ Each one is also a `TODO (spec x.y)` comment in the code.
     saturates (and drops the rest as event 0x0005). The library default is the
     spec minimum; a recorder or router consuming many universes passes a
     larger `replayTableCapacity` (MagnusEngine's SigNetStream uses 8,192).
+    The SDK uses the same model (session per TUID, sequence per Sender-ID,
+    32 entries, reuse after an hour idle) and does not address the
+    many-universes case.
 15. **TID_RT_SCOPE (0x060C).** The SDK defines it (Operational URI scope, a
     UTF-8 string of up to 32 bytes) but V1.14 does not, and Appendix C skips
     0x060C. Is it a TID the next spec version adds, or an SDK leftover? Until
     the spec defines it, the catalogue leaves it out and it is skipped as an
-    unknown TID.
+    unknown TID. The SDK node holds it internally ("local") but never
+    advertises it in TID_RT_SUPPORTED_TIDS, never sends it, ignores GETs and
+    rejects SETs, which looks like a leftover or a future TID.
+16. **Leaving Lost Mode (10.2.6).** What ends Lost Mode: only a Manager
+    addressing this Node (a poll whose TUID range includes it, or a command
+    to it), or any verified Manager traffic? The second means verifying
+    every Manager packet even when it is for another device. The library
+    leaves Lost Mode on a verified poll that includes its TUID. Asked on the
+    Discord by Vari-Lite in August 2026 (SNACtest runs pushed their node into
+    Lost Mode), unanswered.
 
 ## Reference implementation notes
 
