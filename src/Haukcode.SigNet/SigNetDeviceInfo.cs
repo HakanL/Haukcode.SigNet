@@ -35,8 +35,17 @@ public enum EndpointCapabilities : uint
 
     ConsumeRdm = 0x04,
 
+    /// <summary>
+    /// Bit 3, "Can Supply RDM" until V1.14. Reserved (deprecated) since V1.15 and never reported:
+    /// the library clears it in TID_EP_CAPABILITY replies.
+    /// </summary>
+    [Obsolete("TID_EP_CAPABILITY bit 3 is reserved (deprecated) since Sig-Net V1.15 and is never reported")]
     SupplyRdm = 0x08,
 
+    /// <summary>
+    /// The endpoint terminates inside the Device rather than at a physical [DMX512] port. Since
+    /// V1.15 it hosts an RDM responder only when <see cref="ConsumeRdm"/> is set too (spec 6.8.2).
+    /// </summary>
     Virtual = 0x10,
 
     /// <summary>

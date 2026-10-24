@@ -36,6 +36,9 @@ public partial class SigNetClient
     /// </summary>
     public static readonly TimeSpan EndpointSpacingDelay = TimeSpan.FromMilliseconds(1);
 
+    // TID_EP_CAPABILITY bit 3, "Can Supply RDM" until V1.14
+    private const uint DeprecatedSupplyRdmBit = 0x08;
+
     // TID_SET_REPLY: reserved flags byte, then the 16-bit CHANGE_COUNT (spec 11.1.3)
     private const int SetReplyLength = 3;
 
@@ -555,7 +558,8 @@ public partial class SigNetClient
             case Tid.EpCapability when endpointInfo != null:
             {
                 var value = new byte[6];
-                BinaryPrimitives.WriteUInt32BigEndian(value, (uint)endpointInfo.Capabilities);
+                // Bit 3 is reserved (deprecated) since V1.15 (spec 11.7.4)
+                BinaryPrimitives.WriteUInt32BigEndian(value, (uint)endpointInfo.Capabilities & ~DeprecatedSupplyRdmBit);
                 bool consumes = endpointInfo.Capabilities.HasFlag(EndpointCapabilities.ConsumeLevel);
                 BinaryPrimitives.WriteUInt16BigEndian(value.AsSpan(4), consumes ? Math.Max((ushort)4, endpointInfo.MaxMergeSources) : (ushort)0);
                 items.Add((tid, value));

@@ -214,6 +214,22 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public async Task EpCapability_NeverReportsTheDeprecatedBit3()
+    {
+        // Bit 3 was "Can Supply RDM" until V1.14 and is reserved since V1.15 (spec 11.7.4)
+        var info = NodeInfo with { Endpoints = [new SigNetEndpointInfo(1, "Input 1") { Capabilities = EndpointCapabilities.ConsumeLevel | EndpointCapabilities.ConsumeRdm | (EndpointCapabilities)0x08 }] };
+        using var test = new TestClient(info);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend), timeoutMS: 2500);
+        test.Sent.Clear();
+
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("09040000")));
+
+        var (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        var tlvs = SigNetClientTests.ReadTlvs(test.Decode(datagram).Packet.Payload);
+        Assert.Equal(new byte[] { 0, 0, 0, 0x05, 0, 4 }, tlvs.Single().Value);
+    }
+
+    [Fact]
     public async Task SetWithOneChangingValue_IsRefusedAsAWhole()
     {
         using var test = new TestClient(NodeInfo);
