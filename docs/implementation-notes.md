@@ -1,8 +1,9 @@
 # Implementation Notes
 
 Decisions and open spec questions for Haukcode.SigNet 0.1, written against
-the Sig-Net Protocol Framework V1.14 (2026-10-17). Layer 1 of
-[sig-net-plan.md](sig-net-plan.md).
+the Sig-Net Protocol Framework V1.14 (2026-10-17) and brought up to V1.16
+(2026-10-23), which includes the V1.15 peer-review release (2026-10-21).
+Layer 1 of [sig-net-plan.md](sig-net-plan.md).
 
 ## What is implemented
 
@@ -20,18 +21,21 @@ the Sig-Net Protocol Framework V1.14 (2026-10-17). Layer 1 of
 | Sender role | 10.6, 10.7, 11.2.6 | `SigNetClient.Send.cs`, `LevelRefreshPolicy.cs` |
 | Discovery, announcements, security events, Lost Mode | 10.2, 10.9 | `SigNetClient.Discovery.cs` |
 | Receive side of the Node role | 10.6, 10.6.4, 10.7.2 | `SigNetClient.Receive.cs` |
+| TID_DG_LEVEL_FOLDBACK, TID_DG_SOURCE | 11.8.3, 11.8.4 | `SigNetClient.Discovery.cs`, `SigNetClient.Receive.cs`, `LevelFoldbackProvider.cs` |
+| ASCII and UTF-8 labels | 11.6.5, 11.6.11, 11.7.2 | `Model/Payloads.cs` (`TextPayload`) |
+| IPv6 multicast mapping, IPv6 TLV forms | 9.2.3, 11.2.6, 11.7.3, Appendix A | `SigNetMulticast.cs`, `Model/Payloads.cs`, `Model/TidCatalogue.cs` |
 | Beacon Mode for an offboarded device | 7.2.2, 10.2.1 | `SigNetBeacon.cs` |
 
 Out of scope for this version, with room left for them: RDM TIDs,
 TID_TIMECODE, TID_OSC, TID_PREVIEW sending, the Manager role, Open Mode,
-SNOW, and SET handling. The TID catalogue already has every TID, the parser
+SNOW, SET handling, and an IPv6 transport (the sockets are IPv4 only). The TID catalogue already has every TID, the parser
 routes every URI resource, `SigNetPath` builds every URI, and
 `SigNetPacketVerifier` selects the key for every resource, so new roles add
 handlers rather than reshape the client.
 
 ## Verification
 
-- Unit tests (146, net10.0) include the Appendix G vectors: K0, Ks, Kc,
+- Unit tests (185, net10.0) include the Appendix G vectors: K0, Ks, Kc,
   Km_global, Km_local, the 51-byte HMAC input and the HMAC tag. Appendix G
   has no complete datagram, so `CoapCodecTests` checks a hand-assembled
   CoAP encoding of the Appendix G packet as well. The SDK README's second
@@ -92,6 +96,39 @@ handlers rather than reshape the client.
   active universe; `Dispose` sends nothing, so call it first.
 - **Merging** is left to the application: frames carry the Sender-ID,
   priority and timestamps it needs. Stream loss after 3 s is an event only.
+- **Level foldback.** TID_DG_LEVEL_FOLDBACK is mandated for a Node with
+  data endpoints, but the merged output lives in the application, so the
+  host sets `SigNetClient.LevelFoldback` (a `LevelFoldbackProvider`) to copy
+  an endpoint's current levels. Without a provider the TID is neither
+  advertised in TID_RT_SUPPORTED_TIDS nor answered. A provider returning 0
+  slots is answered with a single 0, never a zero-length value.
+- **Sources.** TID_DG_SOURCE is answered by the library from its receive
+  state: every Sender-ID streaming the endpoint's universe that has not timed
+  out (3 s), with its universe priority (the Constrained Node Fallback, so
+  slot 1's priority), its level packets per second over the last one-second
+  window (the rate so far, over at least a second, until the first window
+  closes), and its source address (15 bytes for IPv4, 27 for IPv6). The
+  library does not merge, so every live stream counts as a source; a host
+  merging fewer than all of them reports more sources than it uses. A
+  universe with no source is answered with a single 0.
+- **Diagnostic GETs.** TID_DG_LEVEL_FOLDBACK and TID_DG_SOURCE are Get Only
+  (11.9 "None"): never in a poll reply, and a SET of either is rejected
+  with no reply, even with an unchanged value.
+- **Labels.** TID_RT_DEVICE_LABEL, TID_RT_MODEL_NAME and TID_EP_LABEL are
+  sent with encoding 0x00 (ASCII) when the text is ASCII, otherwise as
+  UTF-8 with encoding 0x01 (V1.15), cut to 64 bytes on a character
+  boundary. On receive 0x01 is decoded as UTF-8 and anything else as
+  ASCII. TID_DG_MESSAGE and the firmware version text stay ASCII, as V1.16
+  defines no encoding byte for them.
+- **IPv6.** `SigNetMulticast.ToIpv6` and the `AddressFamily` overloads give
+  the V1.15 FF18::7369: groups (239.254.X.Y maps to FF18::7369:XXYY). The
+  TLV codecs accept the IPv6 forms of TID_UNIVERSE (21 bytes) and
+  TID_EP_MULT_OVERRIDE (16 bytes), and `UniverseAnnouncement` reads and
+  writes both. The client itself still binds IPv4 sockets, so it sends the
+  IPv4 forms only.
+- **Endpoint capability.** TID_EP_CAPABILITY bit 3 ("Can Supply RDM") is
+  reserved since V1.15; `EndpointCapabilities.SupplyRdm` is obsolete and the
+  bit is cleared in replies.
 - **Discovery levels.** Poll replies follow the 11.9 QUERY_LEVEL table: the
   heartbeat set is TID_POLL_REPLY, TID_RT_ENDPOINT_COUNT and
   TID_RT_MULT_OVERRIDE. The plan listed a larger heartbeat set; the spec
@@ -114,11 +151,40 @@ handlers rather than reshape the client.
   not survive text extraction, and the GitHub copy the spec mentions is not
   published yet.
 
+## Changes from V1.14 to V1.16
+
+What each change in the V1.15 and V1.16 revision history means here:
+
+| Change | Wire | What the library does |
+|--------|------|-----------------------|
+| [UTF-8] reference, encoding 0x01 for TID_RT_DEVICE_LABEL, TID_RT_MODEL_NAME, TID_EP_LABEL (2.1, 11.6.5, 11.6.11, 11.7.2) | Yes | Sends UTF-8 for non-ASCII text, reads both (Labels above) |
+| Virtual Endpoints need an RDM responder only when they support RDM (6.8.2, 11.7.4) | No | Documented on `EndpointCapabilities.Virtual`; RDM is not implemented |
+| TID_EP_CAPABILITY bit 3 deprecated (11.7.4) | Yes | Bit never reported, `SupplyRdm` obsolete |
+| Key export prohibition scoped to Nodes, Senders, Visualisers; Equal Managers exempt (7.6) | No | No change: the library never exports derived keys; `KeyFiles` handles the Equal Manager and Guest Key files the exemption covers |
+| IPv6 multicast FF18::7369:, folding, MLD (9.2.3, 9.5, Appendix A) | Yes | Address mapping only; the transport is IPv4 |
+| TID_UNIVERSE 9 or 21 bytes (11.2.6) | Yes | Both lengths valid and decoded; the IPv4 form is sent |
+| TID_EP_MULT_OVERRIDE 4 or 16 bytes (11.7.3) | Yes | Both lengths valid; the 4-byte form is reported |
+| Sender Endpoint IDs 0x0001 to 0xFF00, timecode and OSC streams from N+1 (8.6.2) | Clarification | Universe lanes stay within 0x0001 to 0xFF00; see open question 6 for the TID_LEVEL part |
+| Proprietary TIDs 0x8000 to 0xFF00, 0xFF01 to 0xFFFF standard diagnostics (10.1.2, 11) | Yes | Already so: `Tid.IsManufacturerTid` stops at 0xFF00 |
+| `<timecode_lost_timeout>` 3 s, `<node_lost_timeout>` in poll cycles (10.8.2, Appendix B) | Timing | Timecode is not implemented; Lost Mode already counts 3 poll cycles of 3 s |
+| HMAC note: leading slash in the reconstructed URI, big-endian TIDs (21.4) | No | Already so; the Appendix G vectors cover both |
+| TID_DG_LEVEL_FOLDBACK reports an endpoint, not a universe (11.8.3) | No | Answered per endpoint from `LevelFoldback` |
+| TID_DG_SOURCE 0xFF04, one TLV per active source (11.8.4) | Yes | Answered from the receive state (Sources above) |
+| V1.16: TID_RT_ENDPOINT_COUNT counts only the TID_LEVEL endpoints 1..N, contiguous on every Device; other data endpoints from N+1 (6.8, 6.8.1, 6.8.2, 8.6.2, 11.6.2) | Clarification | `SigNetDeviceInfo.Endpoints` are the TID_LEVEL endpoints; see open question 6 |
+| V1.16: SoemCode unique per product (6.5) | No | Documented on `SigNetDeviceInfo.SoemCode` |
+| V1.16: TID_RDM_TOD_DATA is sent by Nodes only (11.3.4) | No | RDM is not implemented |
+
+Noticed while diffing: the 11.10 summary table lists TID_DG_LEVEL_FOLDBACK
+but not TID_DG_SOURCE; 11.8.4 makes it mandated for a Node whose data
+endpoint consumes TID_LEVEL, which is what the library follows.
+
 ## Open spec questions
 
 Each one is also a `TODO (spec x.y)` comment in the code. Checked against
 the reference C++ SDK (v0.7) and the Sig-Net Discord (#spec-feedback and
-#snactest) in October 2026; what those show is noted per question. The SDK
+#snactest) in October 2026; what those show is noted per question.
+Re-checked against V1.16: none is resolved; V1.16 narrows question 6, and
+the sections behind the others are unchanged. The SDK
 has no TID_SYNC handling, bootstrap window, idle-repeat logic or
 TID_UNIVERSE, so questions 1, 8, 9 and 13 cannot be checked against it, and
 none of the four has come up on the Discord.
@@ -156,7 +222,18 @@ none of the four has come up on the Discord.
 6. **Endpoint numbering (6.8.2 vs 8.6.2).** Data endpoints are 1..N, Sender
    lanes 1..63999. TID_RT_ENDPOINT_COUNT reports only the Node endpoints, so
    a pure Sender reports 0, and Node endpoint n shares a sequence lane with
-   universe n's level stream.
+   universe n's level stream. V1.16 settles part of this: TID_LEVEL data
+   endpoints are 1..N on every Device (not only Nodes), TID_RT_ENDPOINT_COUNT
+   reports N, and a stream carrying TID_LEVEL "shall use their corresponding
+   Data Endpoint" while timecode and OSC streams take N+1 onwards (Sender
+   Endpoint IDs 0x0001 to 0xFF00). Read literally, a console sending
+   universes 1, 500 and 2000 has data endpoints 1 to 3, sends each universe
+   on its endpoint's lane and reports 3, where this library sends on lanes
+   1, 500 and 2000 and reports 0. Not changed yet: it needs a universe to
+   endpoint mapping on the Sender API, it changes the lanes MagnusEngine's
+   streams use, and a Device that both sends and receives would have to
+   number its sending and receiving endpoints in one 1..N range. Receivers
+   are unaffected either way, since they key on the full Sender-ID.
 7. **Security event codes (11.8.1).** 0x0002 "Replay Attack Detected"
    overlaps 0x0005, 0x0006 and 0x0007. The SDK defines only 0x0001 to
    0x0004 and reports every freshness failure, including a full replay
@@ -191,7 +268,7 @@ none of the four has come up on the Discord.
     32 entries, reuse after an hour idle) and does not address the
     many-universes case.
 15. **TID_RT_SCOPE (0x060C).** The SDK defines it (Operational URI scope, a
-    UTF-8 string of up to 32 bytes) but V1.14 does not, and Appendix C skips
+    UTF-8 string of up to 32 bytes) but V1.14 to V1.16 do not, and Appendix C skips
     0x060C. Is it a TID the next spec version adds, or an SDK leftover? Until
     the spec defines it, the catalogue leaves it out and it is skipped as an
     unknown TID. The SDK node holds it internally ("local") but never
@@ -209,8 +286,8 @@ none of the four has come up on the Discord.
 
 - The SDK README (V0.6 notes) still says 100 folding groups and TTL 16; its
   code and the spec use 109 and 32.
-- The SDK defines `TID_RT_SCOPE` (0x060C), which is not in the V1.14 spec
-  (open question 15).
+- The SDK defines `TID_RT_SCOPE` (0x060C), which is not in the spec up to
+  V1.16 (open question 15).
 - The Rust port (Pixout-Lighting/sig-net, crate `sig-net` 0.8.0, last
   commit 2026-05-13) targets spec V1.0 and is a packet toolkit, not a
   device: CoAP and TLV encoders, a CoAP parser, key derivation, the
@@ -219,9 +296,9 @@ none of the four has come up on the Discord.
   commands, and a C FFI. It has no anti-replay logic (its receiver state
   structs are unused), no TLV length validation, no sync packet builder,
   no priority in its level builder, and no discovery, sync or stream-loss
-  state machines. Against V1.14 it still writes the 7-byte pre-V1.07
-  TID_UNIVERSE (V1.14 is 9 bytes), so strict V1.14 receivers, this library
-  included, drop those packets as malformed. It also has no TID_SET_REPLY
+  state machines. It still writes the 7-byte pre-V1.07 TID_UNIVERSE (9
+  bytes since V1.07, 9 or 21 since V1.15), so strict receivers, this
+  library included, drop those packets as malformed. It also has no TID_SET_REPLY
   and no Appendix G vectors. Its sequence counter sends 0xFFFFFFFF before
   wrapping to 1, unlike this library's reading of open question 2. Its
   option encoding (fixed-width opaque values) and 109-group folding match.

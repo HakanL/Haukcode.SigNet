@@ -3,7 +3,7 @@
 A cross-platform .NET library for the Sig-Net lighting control protocol.
 
 **Status: 0.1, early.** Implements the Sender role and the receive side of
-the Node role against Sig-Net V1.14, verified against the spec's Appendix G
+the Node role against Sig-Net V1.16, verified against the spec's Appendix G
 test vectors and against NETworkshop. Decisions and open spec questions are
 in [docs/implementation-notes.md](docs/implementation-notes.md), the original
 plan in [docs/sig-net-plan.md](docs/sig-net-plan.md). This repo is the sibling
@@ -22,13 +22,14 @@ protected against replay by a per-device session id and per-stream sequence
 number. Keys are derived with HKDF from a 256-bit root key that is onboarded
 once per device. Payloads are not encrypted by design.
 
-Universes map to multicast groups 239.254.0.1 to 239.254.0.109 by
-"Multicast Folding" so that large rigs do not exhaust switch IGMP tables.
+Universes map to multicast groups 239.254.0.1 to 239.254.0.109 (IPv6
+FF18::7369:1 to FF18::7369:6D) by "Multicast Folding" so that large rigs do
+not exhaust switch IGMP or MLD tables.
 The protocol also carries per-slot priority (ETC 0xDD style merging),
 sync, timecode, RDM and firmware upload.
 
 - Protocol site and documents: https://sig-net.net/
-- Specification (V1.14 at the time of writing):
+- Specification (V1.16, 2026-10-23, at the time of writing):
   https://singularity-uk.com/Downloads-for-customers/Sig-Net%20Protocol%20Framework.pdf
 - Reference SDK (C++): https://github.com/WayneHowell/public-sig-net-sdk
 - Wireshark dissector: https://github.com/WayneHowell/public-sig-net-wireshark
@@ -39,7 +40,7 @@ Implemented:
 
 1. Key material: the passphrase rules (ported from the SDK's reference
    routine), PBKDF2 K0, HKDF role keys, `.equalkeys` and `.guestkeys` files.
-2. CoAP and TLV codecs, the full V1.14 TID catalogue, URI routing and the
+2. CoAP and TLV codecs, the full V1.16 TID catalogue, URI routing and the
    Appendix A multicast and key mapping.
 3. HMAC-SHA256 signing and verification, and RAM-only anti-replay with
    first-packet bootstrapping and the 32-entry LRU rule.
@@ -48,12 +49,14 @@ Implemented:
    security events.
 5. Node role, receive only: verified levels with the universe priority
    (Constrained Node Fallback), sync hold-and-release, stream loss events,
-   read-only replies about data endpoints, Lost Mode.
+   read-only replies about data endpoints, TID_DG_SOURCE, TID_DG_LEVEL_FOLDBACK
+   (levels supplied by the host through `LevelFoldback`), Lost Mode.
 6. Beacon Mode: `SigNetBeacon` announces a device that has no keys yet, so
    Managers can list it for onboarding.
 
 Not yet: RDM, timecode, OSC, the Manager role, Open Mode, SNOW, SET
-commands.
+commands, IPv6 transport (the IPv6 multicast mapping and TLV forms are
+there, the sockets are IPv4).
 
 Built on [Haukcode.HighPerfComm](https://github.com/HakanL/Haukcode.HighPerfComm)
 for sharded sending and kernel receive timestamps, like the sibling libraries.
@@ -90,6 +93,10 @@ using var client = new SigNetClient(keys, tuid, deviceInfo, sessionIdStore, IPAd
 
 client.JoinUniverse(1);
 
+// TID_DG_LEVEL_FOLDBACK, mandated for a Node with data endpoints: copy the endpoint's merged
+// output (up to 512 slots) and return the slot count, or 0 if it has none yet
+client.LevelFoldback = (endpoint, levels) => myOutput.CopyMergedLevels(endpoint, levels);
+
 // Send at up to 44 Hz; LevelRefreshPolicy handles the repeat and keep-alive rules
 await client.SendLevels(1, dmxData, priority: 100);
 await client.SendSync();
@@ -106,7 +113,7 @@ ConsoleExample --passphrase "<passphrase>" [--scope local] [--interface <ip>] [-
 
 Sig-Net is a proprietary protocol owned by Singularity (UK) Ltd and licensed
 royalty-free for implementation. Products built with this library must
-comply with the conditions in the specification, which at V1.14 are:
+comply with the conditions in the specification, which at V1.16 are:
 
 - Attribution in the product's manual, About screen or technical
   documentation: "Sig-Net® Designed by and Copyright Singularity (UK) Ltd."
