@@ -41,7 +41,7 @@ public sealed record TidInfo(
 }
 
 /// <summary>
-/// The TID dictionary, hand-written from spec section 11 and Appendix C (V1.14). Section 11 wins
+/// The TID dictionary, hand-written from spec section 11 and Appendix C (V1.16). Section 11 wins
 /// where the two disagree; the differences are listed in docs/implementation-notes.md.
 /// </summary>
 public static class TidCatalogue
@@ -74,7 +74,8 @@ public static class TidCatalogue
             new TidInfo(Tid.Preview, "TID_PREVIEW", TidTarget.Data, false, null, 1, 512),
             new TidInfo(Tid.Sync, "TID_SYNC", TidTarget.Data, false, null, 0, 0),
             new TidInfo(Tid.Timecode, "TID_TIMECODE", TidTarget.Data, false, null, 5, 5),
-            new TidInfo(Tid.Universe, "TID_UNIVERSE", TidTarget.Data, false, null, 9, 9),
+            // 9 bytes with an IPv4 group, 21 with an IPv6 group (V1.15)
+            new TidInfo(Tid.Universe, "TID_UNIVERSE", TidTarget.Data, false, null, 9, 21, ExactLengths: [9, 21]),
             // TODO (spec 11.2.7 vs Appendix C): 11.2.7 says "Variable", Appendix C says 1 to 255
             new TidInfo(Tid.Osc, "TID_OSC", TidTarget.RootAndData, false, null, 1, Coap.MaxPayloadLength - 4),
 
@@ -115,13 +116,14 @@ public static class TidCatalogue
             new TidInfo(Tid.RtRoleCapability, "TID_RT_ROLE_CAPABILITY", TidTarget.Root, true, QueryLevel.Full, 4, 4),
             new TidInfo(Tid.RtReboot, "TID_RT_REBOOT", TidTarget.Root, false, null, 5, 5),
             new TidInfo(Tid.RtModelName, "TID_RT_MODEL_NAME", TidTarget.Root, true, QueryLevel.Full, 1, 65),
-            // TODO (spec): the SDK defines TID_RT_SCOPE (0x060C), V1.14 does not; left out until the spec defines it
+            // TODO (spec): the SDK defines TID_RT_SCOPE (0x060C), V1.16 does not; left out until the spec defines it
             new TidInfo(Tid.RtOtwCapability, "TID_RT_OTW_CAPABILITY", TidTarget.Root, true, QueryLevel.Full, 3, 3),
 
             // 11.7
             new TidInfo(Tid.EpUniverse, "TID_EP_UNIVERSE", TidTarget.Data, true, QueryLevel.Config, 2, 2),
             new TidInfo(Tid.EpLabel, "TID_EP_LABEL", TidTarget.Data, true, QueryLevel.Config, 1, 65),
-            new TidInfo(Tid.EpMultOverride, "TID_EP_MULT_OVERRIDE", TidTarget.Data, true, QueryLevel.Config, 4, 4),
+            // 4 bytes for an IPv4 group, 16 for an IPv6 group (V1.15)
+            new TidInfo(Tid.EpMultOverride, "TID_EP_MULT_OVERRIDE", TidTarget.Data, true, QueryLevel.Config, 4, 16, ExactLengths: [4, 16]),
             // Length 4 is the pre-V1.11 form, still to be accepted (spec 11.7.4 note)
             new TidInfo(Tid.EpCapability, "TID_EP_CAPABILITY", TidTarget.Data, true, QueryLevel.Config, 4, 6, ExactLengths: [4, 6]),
             new TidInfo(Tid.EpDirection, "TID_EP_DIRECTION", TidTarget.Data, true, QueryLevel.Config, 1, 1),
@@ -138,6 +140,8 @@ public static class TidCatalogue
             // TODO (spec 11.9 vs Appendix C): 11.9 targets TID_DG_MESSAGE at Root & Data, 11.8.2 and Appendix C at Root
             new TidInfo(Tid.DgMessage, "TID_DG_MESSAGE", TidTarget.RootAndData, true, QueryLevel.Extended, 1, 64),
             new TidInfo(Tid.DgLevelFoldback, "TID_DG_LEVEL_FOLDBACK", TidTarget.Data, true, null, 1, 512),
+            // One TLV per active source: 15 bytes with an IPv4 address, 27 with IPv6, 1 (a single 0) for none
+            new TidInfo(Tid.DgSource, "TID_DG_SOURCE", TidTarget.Data, true, null, 1, 27, ExactLengths: [1, 15, 27]),
         };
 
         var result = new Dictionary<ushort, TidInfo>(list.Length);

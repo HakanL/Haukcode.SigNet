@@ -71,32 +71,42 @@ public enum UniverseCommand : byte
 }
 
 /// <summary>
-/// TID_UNIVERSE (spec 11.2.6), 9 bytes. A zero multicast address means the default folded group.
+/// TID_UNIVERSE (spec 11.2.6): 9 bytes with an IPv4 group, 21 with an IPv6 group. A zero
+/// multicast address means the default folded group; a null address is written in the IPv4 form.
 /// </summary>
 public readonly record struct UniverseAnnouncement(ushort Universe, UniverseCommand Command, IPAddress? MulticastAddress, ushort SenderEndpoint)
 {
     public const int Length = 9;
 
+    public const int Ipv6Length = 21;
+
+    /// <summary>
+    /// Wire length: <see cref="Ipv6Length"/> for an IPv6 group, otherwise <see cref="Length"/>.
+    /// </summary>
+    public int WireLength => MulticastAddress?.AddressFamily == AddressFamily.InterNetworkV6 ? Ipv6Length : Length;
+
     public static UniverseAnnouncement Read(ReadOnlySpan<byte> value)
     {
-        uint address = BinaryPrimitives.ReadUInt32BigEndian(value[3..]);
+        int addressLength = value.Length >= Ipv6Length ? 16 : 4;
+        var address = value.Slice(3, addressLength);
 
         return new UniverseAnnouncement(
             BinaryPrimitives.ReadUInt16BigEndian(value),
             (UniverseCommand)value[2],
-            address == 0 ? null : new IPAddress(value.Slice(3, 4)),
-            BinaryPrimitives.ReadUInt16BigEndian(value[7..]));
+            address.IndexOfAnyExcept((byte)0) < 0 ? null : new IPAddress(address),
+            BinaryPrimitives.ReadUInt16BigEndian(value[(3 + addressLength)..]));
     }
 
     public void WriteTo(Span<byte> destination)
     {
+        int addressLength = WireLength - 5;
         BinaryPrimitives.WriteUInt16BigEndian(destination, Universe);
         destination[2] = (byte)Command;
         if (MulticastAddress == null)
-            destination.Slice(3, 4).Clear();
-        else if (!MulticastAddress.TryWriteBytes(destination.Slice(3, 4), out _))
-            throw new ArgumentException("TID_UNIVERSE carries an IPv4 address");
-        BinaryPrimitives.WriteUInt16BigEndian(destination[7..], SenderEndpoint);
+            destination.Slice(3, addressLength).Clear();
+        else if (!MulticastAddress.TryWriteBytes(destination.Slice(3, addressLength), out _))
+            throw new ArgumentException("TID_UNIVERSE carries an IPv4 or IPv6 address");
+        BinaryPrimitives.WriteUInt16BigEndian(destination[(3 + addressLength)..], SenderEndpoint);
     }
 }
 

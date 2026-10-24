@@ -116,7 +116,7 @@ public class TlvTests
     [Fact]
     public void Catalogue_CoversSection11AndHasUniqueNames()
     {
-        Assert.Equal(55, TidCatalogue.All.Count);
+        Assert.Equal(56, TidCatalogue.All.Count);
         Assert.Equal(TidCatalogue.All.Count, TidCatalogue.All.Select(t => t.Name).Distinct().Count());
         Assert.True(TidCatalogue.TryGet(Tid.Universe, out var universe));
         Assert.Equal(9, universe.MinLength);
@@ -146,6 +146,63 @@ public class TlvTests
 
         Assert.Equal(Convert.FromHexString("006E" + "01" + "00000000" + "006E"), buffer);
         Assert.Equal(announcement, UniverseAnnouncement.Read(buffer));
+    }
+
+    [Fact]
+    public void Universe_RoundTripsWithIpv6Group()
+    {
+        var announcement = new UniverseAnnouncement(110, UniverseCommand.Join, IPAddress.Parse("ff18::7369:1"), 3);
+        var buffer = new byte[announcement.WireLength];
+
+        announcement.WriteTo(buffer);
+
+        Assert.Equal(UniverseAnnouncement.Ipv6Length, buffer.Length);
+        Assert.Equal(Convert.FromHexString("006E" + "01" + "FF180000000000000000000073690001" + "0003"), buffer);
+        Assert.Equal(announcement, UniverseAnnouncement.Read(buffer));
+
+        // An all-zero IPv6 address is the default folded group, as in the IPv4 form
+        var folded = new byte[UniverseAnnouncement.Ipv6Length];
+        folded[1] = 7;
+        folded[2] = 0x01;
+        folded[20] = 7;
+        Assert.Equal(new UniverseAnnouncement(7, UniverseCommand.Join, null, 7), UniverseAnnouncement.Read(folded));
+    }
+
+    [Theory]
+    // TID_UNIVERSE: 9 (IPv4) or 21 (IPv6) bytes, nothing in between (spec 11.2.6, V1.15)
+    [InlineData(9, true)]
+    [InlineData(15, false)]
+    [InlineData(21, true)]
+    public void Universe_AcceptsIpv4AndIpv6Lengths(int length, bool valid)
+    {
+        Assert.True(TidCatalogue.TryGet(Tid.Universe, out var info));
+        Assert.Equal(valid, info.IsValidLength(length));
+    }
+
+    [Theory]
+    // TID_EP_MULT_OVERRIDE: 4 (IPv4) or 16 (IPv6) bytes (spec 11.7.3, V1.15)
+    [InlineData(4, true)]
+    [InlineData(8, false)]
+    [InlineData(16, true)]
+    public void EpMultOverride_AcceptsIpv4AndIpv6Lengths(int length, bool valid)
+    {
+        Assert.True(TidCatalogue.TryGet(Tid.EpMultOverride, out var info));
+        Assert.Equal(valid, info.IsValidLength(length));
+    }
+
+    [Theory]
+    // TID_DG_SOURCE: a query, a single 0 for no sources, or one 15 (IPv4) or 27 (IPv6) byte source (spec 11.8.4)
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(14, false)]
+    [InlineData(15, true)]
+    [InlineData(27, true)]
+    public void DgSource_AcceptsItsLengths(int length, bool valid)
+    {
+        Assert.True(TidCatalogue.TryGet(Tid.DgSource, out var info));
+        Assert.Equal(TidTarget.Data, info.Target);
+        Assert.Null(info.PollLevel);
+        Assert.Equal(valid, info.IsValidLength(length));
     }
 
     [Fact]

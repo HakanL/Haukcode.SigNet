@@ -1,8 +1,9 @@
 namespace Haukcode.SigNet.Model;
 
 /// <summary>
-/// Type Identifiers of spec section 11 (V1.14). 0x8000 to 0xFF00 is the manufacturer range,
-/// interpreted only in the context of the Sig-Net-Mfg-Code option (spec 10.1.2).
+/// Type Identifiers of spec section 11 (V1.16). 0x8000 to 0xFF00 is the manufacturer range,
+/// interpreted only in the context of the Sig-Net-Mfg-Code option (spec 10.1.2); 0xFF01 to 0xFFFF
+/// are the standard diagnostic and system TIDs (spec 11).
 /// </summary>
 public static class Tid
 {
@@ -76,6 +77,7 @@ public static class Tid
     public const ushort DgSecurityEvent = 0xFF01;
     public const ushort DgMessage = 0xFF02;
     public const ushort DgLevelFoldback = 0xFF03;
+    public const ushort DgSource = 0xFF04;
 
     public const ushort FirstManufacturerTid = 0x8000;
     public const ushort LastManufacturerTid = 0xFF00;
