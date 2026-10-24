@@ -130,7 +130,8 @@ public sealed record SigNetDeviceInfo
     }
 
     /// <summary>
-    /// The product's SoemCode (spec 6.5). Reporting it correctly is a license condition.
+    /// The product's SoemCode (spec 6.5). Reporting it correctly is a license condition, and each
+    /// distinct product (hardware model, endpoint configuration or architecture) has its own.
     /// </summary>
     public uint SoemCode { get; }
 
@@ -168,7 +169,9 @@ public sealed record SigNetDeviceInfo
     public ushort ChangeCount { get; init; }
 
     /// <summary>
-    /// Data endpoints 1 to N, reported read-only. Empty for a pure Sender.
+    /// Data endpoints 1 to N, reported read-only. Empty for a pure Sender. These are the
+    /// TID_LEVEL endpoints counted in TID_RT_ENDPOINT_COUNT (spec 6.8); a timecode or OSC
+    /// endpoint would be numbered from N+1 and not listed here.
     /// </summary>
     public IReadOnlyList<SigNetEndpointInfo> Endpoints { get; init; } = [];
 }

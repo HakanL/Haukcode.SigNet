@@ -26,7 +26,9 @@ public partial class SigNetClient
     private readonly object sendLock = new();
 
     // Per-lane sequence counters indexed by Sender endpoint: 0 for admin, the universe number for
-    // its level stream (spec 8.6.2: one lane per universe, endpoints 1 to 63999)
+    // its level stream (spec 8.6.2: one lane per stream, endpoints 0x0001 to 0xFF00).
+    // TODO (spec 8.6.2): V1.16 has TID_LEVEL streams use the Device's data endpoints 1..N rather
+    // than the universe; see TID_RT_ENDPOINT_COUNT in SigNetClient.Discovery.cs
     private readonly uint[] laneSequence = new uint[ushort.MaxValue + 1];
     private uint sessionId;
     private bool sessionExhausted;
