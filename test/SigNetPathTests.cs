@@ -1,5 +1,6 @@
 using System;
 using System.Net;
+using System.Net.Sockets;
 using Haukcode.SigNet.Keys;
 using Haukcode.SigNet.Model;
 using Xunit;
@@ -121,6 +122,31 @@ public class SigNetPathTests
         Assert.Equal(IPAddress.Parse("239.254.255.250"), SigNetMulticast.GetAddress(SigNetPath.Timecode("local", 1)));
         Assert.Equal(IPAddress.Parse("239.254.255.249"), SigNetMulticast.GetAddress(SigNetPath.Preview("local", 1)));
         Assert.Equal(IPAddress.Parse("239.254.255.248"), SigNetMulticast.GetAddress(SigNetPath.Aux("local", tuid, 1)));
+    }
+
+    [Theory]
+    // V1.15 IPv6 folding: FF18::7369:0001 to FF18::7369:006D (spec 9.2.3)
+    [InlineData(1, "ff18::7369:1")]
+    [InlineData(109, "ff18::7369:6d")]
+    [InlineData(110, "ff18::7369:1")]
+    [InlineData(63999, "ff18::7369:10")]
+    public void MulticastFolding_MapsToTheIpv6Pool(int universe, string expected)
+    {
+        Assert.Equal(IPAddress.Parse(expected), SigNetMulticast.GetUniverseAddress((ushort)universe, AddressFamily.InterNetworkV6));
+        Assert.Equal(IPAddress.Parse(expected), SigNetMulticast.GetAddress(SigNetPath.Level("local", (ushort)universe), AddressFamily.InterNetworkV6));
+        Assert.Equal(SigNetMulticast.GetUniverseAddress((ushort)universe), SigNetMulticast.GetUniverseAddress((ushort)universe, AddressFamily.InterNetwork));
+    }
+
+    [Fact]
+    public void AdministrativeGroups_MirrorIpv4InIpv6()
+    {
+        var tuid = new Tuid(0x0744, 1);
+
+        // Appendix A note 2: FF18::7369:FFF8 to FF18::7369:FFFF, <mult_node_beacon> = FF18::7369:FFFF
+        Assert.Equal(IPAddress.Parse("ff18::7369:ffff"), SigNetMulticast.GetAddress(SigNetPath.NodeBeacon(tuid), AddressFamily.InterNetworkV6));
+        Assert.Equal(IPAddress.Parse("ff18::7369:fffd"), SigNetMulticast.GetAddress(SigNetPath.Node("local", tuid, 0), AddressFamily.InterNetworkV6));
+        Assert.Equal(IPAddress.Parse("ff18::7369:fff8"), SigNetMulticast.GetAddress(SigNetPath.Aux("local", tuid, 1), AddressFamily.InterNetworkV6));
+        Assert.Throws<ArgumentException>(() => SigNetMulticast.ToIpv6(IPAddress.Parse("239.255.0.1")));
     }
 
     [Theory]
