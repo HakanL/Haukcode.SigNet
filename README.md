@@ -125,6 +125,10 @@ comply with the conditions in the specification, which at V1.16 are:
 This library itself is MIT licensed (see [LICENSE](LICENSE)). The library
 is not affiliated with or endorsed by Singularity (UK) Ltd.
 
+## Used in production
+
+This library is used in [DMX Core 100](https://dmxcore.com), a DMX lighting controller for permanent installations that runs on Windows, macOS and Linux, or on its own touchscreen hardware. There it sends, receives, records and routes Sig-Net, and onboards each unit from the network passphrase. Sig-Net support is an experimental feature in DMX Core 100 for now.
+
 ## License
 
 MIT. Copyright (c) 2026 Hakan Lindestaf.
