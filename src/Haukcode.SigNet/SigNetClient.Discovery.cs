@@ -56,8 +56,12 @@ public partial class SigNetClient
     private static readonly ushort[] dataTids =
     [
         Tid.EpUniverse, Tid.EpLabel, Tid.EpMultOverride, Tid.EpCapability, Tid.EpDirection,
-        Tid.EpStatus, Tid.EpFailover, Tid.EpRefreshCapability, Tid.EpProtocol, Tid.EpIdentify
+        Tid.EpStatus, Tid.EpFailover, Tid.EpRefreshCapability, Tid.EpProtocol, Tid.EpIdentify,
+        Tid.DgSource
     ];
+
+    // With a LevelFoldback provider set, TID_DG_LEVEL_FOLDBACK is answered and advertised too
+    private static readonly ushort[] dataTidsWithFoldback = [.. dataTids, Tid.DgLevelFoldback];
 
     // Security event state (spec 10.9): counter, last offending address and last transmission per code
     private readonly object securityLock = new();
@@ -71,6 +75,15 @@ public partial class SigNetClient
     private long lastAnnounceTimestamp;
     private long lastNodeLostTimestamp;
     private bool lostMode;
+
+    /// <summary>
+    /// Supplies each data endpoint's current merged levels for TID_DG_LEVEL_FOLDBACK (spec
+    /// 11.8.3), which the spec mandates for a Node with data endpoints. While it is null the TID
+    /// is neither advertised in TID_RT_SUPPORTED_TIDS nor answered.
+    /// </summary>
+    public LevelFoldbackProvider? LevelFoldback { get; set; }
+
+    private ushort[] DataTids => LevelFoldback == null ? dataTids : dataTidsWithFoldback;
 
     /// <summary>
     /// True while a Node has gone <see cref="NodeLostPollCycles"/> poll cycles without a valid poll
@@ -302,11 +315,12 @@ public partial class SigNetClient
 
         foreach (ushort target in endpoints)
         {
-            var applicable = target == 0 ? rootTids : dataTids;
+            var applicable = target == 0 ? rootTids : DataTids;
             var items = new List<(ushort Tid, byte[] Value)>();
             foreach (var (tid, value) in sets)
             {
-                if (Array.IndexOf(applicable, tid) < 0)
+                // The diagnostic foldback and source reports are Get Only (spec 11.9)
+                if (Array.IndexOf(applicable, tid) < 0 || tid is Tid.DgLevelFoldback or Tid.DgSource)
                 {
                     // A broadcast SET skips the endpoints a TID does not apply to; a targeted one is invalid
                     if (endpoint != PollRequest.AllEndpoints)
@@ -434,7 +448,7 @@ public partial class SigNetClient
     {
         var info = this.deviceInfo;
         var items = new List<(ushort Tid, byte[] Value)>();
-        foreach (ushort tid in endpoint == 0 ? rootTids : dataTids)
+        foreach (ushort tid in endpoint == 0 ? rootTids : DataTids)
         {
             if (include(tid))
                 AddTlvs(items, tid, endpoint, info);
@@ -594,15 +608,29 @@ public partial class SigNetClient
             case Tid.EpIdentify when endpointInfo != null:
                 items.Add((tid, [0x00]));
                 break;
+
+            case Tid.DgLevelFoldback when endpointInfo != null && LevelFoldback is { } foldback:
+            {
+                var levels = new byte[512];
+                int count = Math.Clamp(foldback(endpoint, levels), 0, levels.Length);
+
+                // An empty or uninitialised buffer is a single 0, never a zero-length value (spec 11.8.3)
+                items.Add((tid, count == 0 ? [0x00] : levels[..count]));
+                break;
+            }
+
+            case Tid.DgSource when endpointInfo != null:
+                AddSourceTlvs(items, endpointInfo.Universe);
+                break;
         }
     }
 
-    private static byte[] GetSupportedTids(SigNetDeviceInfo info)
+    private byte[] GetSupportedTids(SigNetDeviceInfo info)
     {
         var tids = new List<ushort> { Tid.Poll, Tid.PollReply, Tid.Level, Tid.Priority, Tid.Sync, Tid.Universe };
         tids.AddRange(rootTids);
         if (info.Endpoints.Count > 0)
-            tids.AddRange(dataTids);
+            tids.AddRange(DataTids);
 
         var value = new byte[tids.Count * 2];
         for (int i = 0; i < tids.Count; i++)

@@ -229,6 +229,176 @@ public class DiscoveryTests
         Assert.Equal(new byte[] { 0, 0, 0, 0x05, 0, 4 }, tlvs.Single().Value);
     }
 
+    private static async Task<(SigNetPath Path, System.Collections.Generic.List<(ushort Tid, byte[] Value)> Tlvs)> Get(DiscoveryTests owner, TestClient test, ushort endpoint, string tlvs)
+    {
+        test.Sent.Clear();
+        test.Inject(owner.ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, endpoint), Convert.FromHexString(tlvs)));
+
+        // The reply carries the first requested TID; skip anything else sent meanwhile
+        ushort first = Convert.ToUInt16(tlvs[..4], 16);
+        var (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend) && SigNetClientTests.ReadTlvs(test.Decode(s.Datagram).Packet.Payload).Any(t => t.Tid == first));
+        var (path, packet) = test.Decode(datagram);
+
+        return (path, SigNetClientTests.ReadTlvs(packet.Payload));
+    }
+
+    private static async Task<ushort[]> GetSupportedTids(DiscoveryTests owner, TestClient test)
+    {
+        var (_, tlvs) = await Get(owner, test, 0, "06010000");
+        var value = tlvs.Single().Value;
+
+        return Enumerable.Range(0, value.Length / 2).Select(i => (ushort)((value[i * 2] << 8) | value[i * 2 + 1])).ToArray();
+    }
+
+    [Fact]
+    public async Task LevelFoldback_WithoutAProvider_IsNotAdvertisedOrAnswered()
+    {
+        using var test = new TestClient(NodeInfo);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend), timeoutMS: 2500);
+
+        Assert.DoesNotContain(Tid.DgLevelFoldback, await GetSupportedTids(this, test));
+
+        test.Sent.Clear();
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("FF030000")));
+        await Wait.Until(() => test.Client.GetVerifyCounts()[Security.VerifyResult.Accepted] == 2);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+    }
+
+    [Fact]
+    public async Task LevelFoldback_IsAnsweredFromTheProvider()
+    {
+        using var test = new TestClient(NodeInfo);
+        var asked = new System.Collections.Concurrent.ConcurrentQueue<ushort>();
+        test.Client.LevelFoldback = (endpoint, levels) =>
+        {
+            asked.Enqueue(endpoint);
+            if (endpoint == 2)
+                return 0;
+
+            levels[0] = 0xFF;
+            levels[2] = 0x80;
+
+            return 3;
+        };
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend), timeoutMS: 2500);
+
+        Assert.Contains(Tid.DgLevelFoldback, await GetSupportedTids(this, test));
+
+        // GET on data endpoint 1, replied on that endpoint (spec 11.8.3)
+        var (path, tlvs) = await Get(this, test, 1, "FF030000");
+        Assert.Equal(SigNetPath.Node("local", test.Tuid, 1), path);
+        Assert.Equal(Tid.DgLevelFoldback, tlvs.Single().Tid);
+        Assert.Equal(new byte[] { 0xFF, 0x00, 0x80 }, tlvs.Single().Value);
+
+        // Nothing to report yet: length 1, data 0, never zero length
+        (_, tlvs) = await Get(this, test, 2, "FF030000");
+        Assert.Equal(new byte[] { 0x00 }, tlvs.Single().Value);
+        Assert.Equal(new ushort[] { 1, 2 }, asked.ToArray());
+    }
+
+    [Fact]
+    public async Task LevelFoldback_IsNotInPollRepliesAndCannotBeSet()
+    {
+        using var test = new TestClient(NodeInfo);
+        test.Client.LevelFoldback = (_, levels) =>
+        {
+            levels[0] = 1;
+
+            return 1;
+        };
+        await Task.Delay(Security.SigNetPacketVerifier.BootstrapWindow, TestContext.Current.CancellationToken);
+        test.Sent.Clear();
+
+        // Get Only: no QUERY_LEVEL includes it (spec 11.9)
+        test.Inject(ManagerPacket(test, SigNetPath.Poll("local"), PollPayload(test.Tuid, test.Tuid, 1, QueryLevel.Extended)));
+        var (_, datagram) = await NextReply(test, 1);
+        var tids = SigNetClientTests.ReadTlvs(test.Decode(datagram).Packet.Payload).Select(t => t.Tid).ToArray();
+        Assert.DoesNotContain(Tid.DgLevelFoldback, tids);
+        Assert.DoesNotContain(Tid.DgSource, tids);
+
+        // A SET with the current value is still refused
+        test.Sent.Clear();
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("FF030001" + "01")));
+        await Wait.Until(() => test.Client.GetVerifyCounts()[Security.VerifyResult.Accepted] == 2);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+    }
+
+    [Fact]
+    public async Task DgSource_ReportsEachActiveSourceOfTheEndpoint()
+    {
+        var info = NodeInfo with
+        {
+            Endpoints =
+            [
+                new SigNetEndpointInfo(5, "Input 1"),
+                new SigNetEndpointInfo(6, "Input 2")
+            ]
+        };
+        using var test = new TestClient(info);
+        test.Client.JoinUniverse(5);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend), timeoutMS: 2500);
+
+        Assert.Contains(Tid.DgSource, await GetSupportedTids(this, test));
+
+        // This client sends universe 5 to itself at priority 120
+        await test.Client.SendLevels(5, new byte[] { 1, 2, 3 }, priority: 120, destination: IPAddress.Loopback);
+        await Wait.For(test.Received);
+
+        var (path, tlvs) = await Get(this, test, 1, "FF040000");
+        Assert.Equal(SigNetPath.Node("local", test.Tuid, 1), path);
+        var source = tlvs.Single();
+        Assert.Equal(Tid.DgSource, source.Tid);
+        // Sender-ID (TUID and lane 5), priority, packets per second, IPv4 address: 15 bytes (spec 11.8.4)
+        Assert.Equal(15, source.Value.Length);
+        Assert.Equal(new SenderId(test.Tuid, 5), SenderId.Read(source.Value));
+        Assert.Equal(120, source.Value[8]);
+        Assert.True(((source.Value[9] << 8) | source.Value[10]) >= 1);
+        Assert.Equal(IPAddress.Loopback, new IPAddress(source.Value.AsSpan(11, 4)));
+
+        // No active source on endpoint 2: length 1, data 0
+        (_, tlvs) = await Get(this, test, 2, "FF040000");
+        Assert.Equal(new byte[] { 0x00 }, tlvs.Single().Value);
+    }
+
+    [Fact]
+    public async Task DgSource_ReportsThePacketRate_AndDropsTimedOutSources()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var test = new TestClient(NodeInfo with { Endpoints = [new SigNetEndpointInfo(9, "Input 1")] }, timeProvider: time);
+        test.Client.JoinUniverse(9);
+
+        async Task SendFrames(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                await test.Client.SendLevels(9, new byte[] { (byte)(test.Received.Count + 1) }, destination: IPAddress.Loopback);
+                await Wait.For(test.Received);
+            }
+        }
+
+        static int Rate(byte[] value) => (value[9] << 8) | value[10];
+
+        // 4 packets in the first half second: the rate so far, over at least one second
+        await SendFrames(4);
+        time.Advance(TimeSpan.FromSeconds(0.5));
+        var (_, tlvs) = await Get(this, test, 1, "FF040000");
+        Assert.Equal(4, Rate(tlvs.Single().Value));
+
+        // 2 more after 1.1 s close the window: 6 packets in 1.1 s
+        await SendFrames(1);
+        time.Advance(TimeSpan.FromSeconds(0.6));
+        await SendFrames(1);
+        (_, tlvs) = await Get(this, test, 1, "FF040000");
+        Assert.Equal(5, Rate(tlvs.Single().Value));
+
+        // Gone for <universe_lost_timeout>: no longer a source (spec 11.8.4)
+        time.Advance(SigNetClient.UniverseLostTimeout);
+        (_, tlvs) = await Get(this, test, 1, "FF040000");
+        Assert.Equal(new byte[] { 0x00 }, tlvs.Single().Value);
+    }
+
     [Fact]
     public async Task SetWithOneChangingValue_IsRefusedAsAWhole()
     {

@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using System.Net;
+using System.Net.Sockets;
 using Haukcode.SigNet.Model;
 using Haukcode.SigNet.Security;
 
@@ -28,6 +30,12 @@ public partial class SigNetClient
         public byte Priority = DefaultPriority;
         public bool HasPriority;
         public long LastSeenTimestamp;
+
+        // For TID_DG_SOURCE: the latest source address and the packet rate
+        public IPAddress Address = IPAddress.Any;
+        public int WindowPackets;
+        public long WindowStartTimestamp;
+        public ushort PacketRate;
 
         // The latest frame held while the sender is in SYNC_ACTIVE
         public readonly byte[] Held = new byte[512];
@@ -305,7 +313,10 @@ public partial class SigNetClient
             if (!hasLevels)
                 return null;
 
-            stream.LastSeenTimestamp = this.timeProvider.GetTimestamp();
+            long now = this.timeProvider.GetTimestamp();
+            stream.LastSeenTimestamp = now;
+            stream.Address = source.Address.IsIPv4MappedToIPv6 ? source.Address.MapToIPv4() : source.Address;
+            CountPacketLocked(stream, now);
 
             if (this.syncStates.TryGetValue(header.SenderId.Tuid.Value, out var sync) && sync.Active)
             {
@@ -500,6 +511,65 @@ public partial class SigNetClient
             status |= 0x10;
 
         return status;
+    }
+
+    // Level packets per second over windows of at least a second. Called under relay.Lock.
+    private void CountPacketLocked(StreamState stream, long now)
+    {
+        if (stream.WindowPackets == 0)
+            stream.WindowStartTimestamp = now;
+
+        stream.WindowPackets++;
+
+        var elapsed = this.timeProvider.GetElapsedTime(stream.WindowStartTimestamp, now);
+        if (elapsed >= TimeSpan.FromSeconds(1))
+        {
+            stream.PacketRate = (ushort)Math.Min(ushort.MaxValue, Math.Round(stream.WindowPackets / elapsed.TotalSeconds));
+            stream.WindowPackets = 0;
+        }
+    }
+
+    /// <summary>
+    /// TID_DG_SOURCE (spec 11.8.4): one TLV per stream feeding the universe that has not timed out,
+    /// or a single 0 when there is none. The library does not merge, so every live stream is
+    /// reported as processed by the merge engine.
+    /// </summary>
+    private void AddSourceTlvs(List<(ushort, byte[])> items, ushort universe)
+    {
+        int before = items.Count;
+
+        if (universe != 0)
+        {
+            lock (this.relay.Lock)
+            {
+                foreach (var ((senderId, streamUniverse), stream) in this.streams)
+                {
+                    if (streamUniverse != universe || this.timeProvider.GetElapsedTime(stream.LastSeenTimestamp) >= UniverseLostTimeout)
+                        continue;
+
+                    bool ipv6 = stream.Address.AddressFamily == AddressFamily.InterNetworkV6;
+                    var value = new byte[ipv6 ? 27 : 15];
+                    SenderId.FromValue(senderId).WriteTo(value);
+                    value[8] = stream.Priority;
+
+                    // Until the first one-second window closes, the rate so far
+                    ushort rate = stream.PacketRate;
+                    if (rate == 0 && stream.WindowPackets > 0)
+                    {
+                        double seconds = Math.Max(this.timeProvider.GetElapsedTime(stream.WindowStartTimestamp).TotalSeconds, 1);
+                        rate = (ushort)Math.Round(stream.WindowPackets / seconds);
+                    }
+
+                    BinaryPrimitives.WriteUInt16BigEndian(value.AsSpan(9), rate);
+                    stream.Address.TryWriteBytes(value.AsSpan(11), out _);
+                    items.Add((Tid.DgSource, value));
+                }
+            }
+        }
+
+        // No active source: length 1, data 0, never a zero-length value (spec 11.8.4)
+        if (items.Count == before)
+            items.Add((Tid.DgSource, [0x00]));
     }
 
     private IPEndPoint? ResolveReceiveDestination(IPAddress destinationIP)
