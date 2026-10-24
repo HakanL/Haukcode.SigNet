@@ -175,17 +175,57 @@ public static class TextPayload
 {
     public const byte EncodingAscii = 0x00;
 
+    /// <summary>
+    /// [UTF-8] encoding byte, added in V1.15 (spec 11.6.5, 11.6.11, 11.7.2).
+    /// </summary>
+    public const byte EncodingUtf8 = 0x01;
+
+    /// <summary>
+    /// Maximum text length in bytes, after the encoding byte.
+    /// </summary>
     public const int MaxTextLength = 64;
 
     /// <summary>
-    /// Encoding byte 0x00 then up to 64 ASCII bytes, not null-terminated. Longer text is cut.
+    /// Encoding byte then up to 64 bytes of text, not null-terminated. ASCII text is sent with
+    /// encoding 0x00; anything else as UTF-8 with encoding 0x01. Longer text is cut, never in the
+    /// middle of a character.
     /// </summary>
     public static void WriteLabel(ref TlvWriter writer, ushort tid, string text)
     {
+        var value = GetLabelBytes(text);
+        writer.Write(tid, value);
+    }
+
+    /// <summary>
+    /// The value of a label TID: encoding byte then the text, as <see cref="WriteLabel"/> writes it.
+    /// </summary>
+    public static byte[] GetLabelBytes(string text)
+    {
+        if (!Ascii.IsValid(text))
+            return GetUtf8LabelBytes(text);
+
         int length = Math.Min(text.Length, MaxTextLength);
-        var value = writer.Reserve(tid, 1 + length);
+        var value = new byte[1 + length];
         value[0] = EncodingAscii;
-        WriteAscii(text.AsSpan(0, length), value[1..]);
+        WriteAscii(text.AsSpan(0, length), value.AsSpan(1));
+
+        return value;
+    }
+
+    private static byte[] GetUtf8LabelBytes(string text)
+    {
+        var buffer = new byte[1 + MaxTextLength];
+        buffer[0] = EncodingUtf8;
+        int length = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (length + rune.Utf8SequenceLength > MaxTextLength)
+                break;
+
+            length += rune.EncodeToUtf8(buffer.AsSpan(1 + length));
+        }
+
+        return buffer[..(1 + length)];
     }
 
     /// <summary>
@@ -199,9 +239,16 @@ public static class TextPayload
         WriteAscii(text.AsSpan(0, length), value[4..]);
     }
 
+    /// <summary>
+    /// The text of a label TID. Encoding 0x01 is UTF-8; 0x00 and the reserved values are read as
+    /// ASCII.
+    /// </summary>
     public static string ReadLabel(ReadOnlySpan<byte> value)
     {
-        return value.Length <= 1 ? string.Empty : Encoding.ASCII.GetString(value[1..]);
+        if (value.Length <= 1)
+            return string.Empty;
+
+        return value[0] == EncodingUtf8 ? Encoding.UTF8.GetString(value[1..]) : Encoding.ASCII.GetString(value[1..]);
     }
 
     private static void WriteAscii(ReadOnlySpan<char> text, Span<byte> destination)

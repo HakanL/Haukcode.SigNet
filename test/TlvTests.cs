@@ -206,6 +206,42 @@ public class TlvTests
     }
 
     [Fact]
+    public void Label_AsciiTextUsesEncoding0()
+    {
+        Assert.Equal(Convert.FromHexString("00" + "5261636B2031"), TextPayload.GetLabelBytes("Rack 1"));
+        Assert.Equal(1 + TextPayload.MaxTextLength, TextPayload.GetLabelBytes(new string('a', 80)).Length);
+    }
+
+    [Fact]
+    public void Label_NonAsciiTextUsesUtf8Encoding1()
+    {
+        // "Scène" in UTF-8 (spec 11.6.5, V1.15)
+        var value = TextPayload.GetLabelBytes("Scène");
+
+        Assert.Equal(Convert.FromHexString("01" + "5363C3A86E65"), value);
+        Assert.Equal("Scène", TextPayload.ReadLabel(value));
+    }
+
+    [Fact]
+    public void Label_Utf8IsCutAtACharacterBoundary()
+    {
+        // 63 ASCII bytes, then a 2-byte character that does not fit in the 64-byte limit
+        var value = TextPayload.GetLabelBytes(new string('a', 63) + "éé");
+
+        Assert.Equal(TextPayload.EncodingUtf8, value[0]);
+        Assert.Equal(1 + 63, value.Length);
+        Assert.Equal(new string('a', 63), TextPayload.ReadLabel(value));
+    }
+
+    [Fact]
+    public void Label_ReadsAsciiAndUtf8()
+    {
+        Assert.Equal("Rack 1", TextPayload.ReadLabel(Convert.FromHexString("00" + "5261636B2031")));
+        Assert.Equal("Å", TextPayload.ReadLabel(Convert.FromHexString("01" + "C385")));
+        Assert.Equal(string.Empty, TextPayload.ReadLabel(Convert.FromHexString("01")));
+    }
+
+    [Fact]
     public void SecurityEvent_LengthFollowsAddress()
     {
         var withIpv4 = new SecurityEvent(SecurityEventCode.HmacFailure, 3, IPAddress.Parse("10.0.0.5"));

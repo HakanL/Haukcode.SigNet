@@ -489,7 +489,7 @@ public partial class SigNetClient
                 break;
 
             case Tid.RtDeviceLabel:
-                items.Add((tid, LabelBytes(info.DeviceLabel)));
+                items.Add((tid, TextPayload.GetLabelBytes(info.DeviceLabel)));
                 break;
 
             case Tid.RtIdentify:
@@ -523,7 +523,7 @@ public partial class SigNetClient
                 break;
 
             case Tid.RtModelName:
-                items.Add((tid, LabelBytes(info.ModelName)));
+                items.Add((tid, TextPayload.GetLabelBytes(info.ModelName)));
                 break;
 
             case Tid.DgSecurityEvent:
@@ -545,7 +545,7 @@ public partial class SigNetClient
                 break;
 
             case Tid.EpLabel when endpointInfo != null:
-                items.Add((tid, LabelBytes(endpointInfo.Label)));
+                items.Add((tid, TextPayload.GetLabelBytes(endpointInfo.Label)));
                 break;
 
             case Tid.EpMultOverride when endpointInfo != null:
@@ -665,15 +665,6 @@ public partial class SigNetClient
         return bytes;
     }
 
-    // Encoding byte 0x00 (ASCII) then the text, at most 64 bytes, not null-terminated
-    private static byte[] LabelBytes(string text)
-    {
-        var ascii = Ascii(text);
-        var value = new byte[1 + ascii.Length];
-        ascii.CopyTo(value, 1);
-
-        return value;
-    }
 
     private static byte[] Ascii(string text)
     {

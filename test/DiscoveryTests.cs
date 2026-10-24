@@ -190,6 +190,30 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public async Task NonAsciiLabel_IsReportedAsUtf8_AndASameValueUtf8SetIsEchoed()
+    {
+        var info = NodeInfo with { Endpoints = [new SigNetEndpointInfo(1, "Scène")] };
+        using var test = new TestClient(info);
+        await Task.Delay(Security.SigNetPacketVerifier.BootstrapWindow, TestContext.Current.CancellationToken);
+        await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        test.Sent.Clear();
+
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("09020000")));
+
+        var (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        var tlvs = SigNetClientTests.ReadTlvs(test.Decode(datagram).Packet.Payload);
+        // Encoding 0x01 (spec 11.7.2, V1.15), then "Scène" in UTF-8
+        Assert.Equal(Convert.FromHexString("01" + "5363C3A86E65"), tlvs.Single().Value);
+        test.Sent.Clear();
+
+        test.Inject(ManagerPacket(test, SigNetPath.Manager("local", test.Tuid, 1), Convert.FromHexString("09020007" + "01" + "5363C3A86E65")));
+
+        (_, datagram) = await Wait.For(test.Sent, s => s.Destination.Address.Equals(SigNetMulticast.NodeSend));
+        tlvs = SigNetClientTests.ReadTlvs(test.Decode(datagram).Packet.Payload);
+        Assert.Equal(new[] { Tid.EpLabel, Tid.SetReply }, tlvs.Select(t => t.Tid));
+    }
+
+    [Fact]
     public async Task SetWithOneChangingValue_IsRefusedAsAWhole()
     {
         using var test = new TestClient(NodeInfo);

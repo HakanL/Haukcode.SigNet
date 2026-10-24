@@ -79,7 +79,7 @@ public sealed record SigNetEndpointInfo
     public ushort Universe { get; init; }
 
     /// <summary>
-    /// TID_EP_LABEL, up to 64 ASCII characters.
+    /// TID_EP_LABEL, up to 64 bytes: sent as ASCII, or as UTF-8 when it has non-ASCII characters.
     /// </summary>
     public string Label { get; init; }
 
@@ -126,12 +126,12 @@ public sealed record SigNetDeviceInfo
     public uint SoemCode { get; }
 
     /// <summary>
-    /// TID_RT_MODEL_NAME, up to 64 ASCII characters.
+    /// TID_RT_MODEL_NAME, up to 64 bytes: sent as ASCII, or as UTF-8 when it has non-ASCII characters.
     /// </summary>
     public string ModelName { get; init; }
 
     /// <summary>
-    /// TID_RT_DEVICE_LABEL, up to 64 ASCII characters.
+    /// TID_RT_DEVICE_LABEL, up to 64 bytes: sent as ASCII, or as UTF-8 when it has non-ASCII characters.
     /// </summary>
     public string DeviceLabel { get; init; }
 
