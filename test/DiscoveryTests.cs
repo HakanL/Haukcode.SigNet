@@ -401,6 +401,48 @@ public class DiscoveryTests
     }
 
     [Fact]
+    public async Task MixedEndpoints_ReportTheirDirectionAndCapability()
+    {
+        var info = NodeInfo with { Endpoints = [SigNetEndpointInfo.Input(5, "In 5"), SigNetEndpointInfo.Output(300, "Out 300")] };
+        using var test = new TestClient(info);
+        var asked = new System.Collections.Concurrent.ConcurrentQueue<(ushort Endpoint, ushort Universe)>();
+        test.Client.LevelFoldback = (endpoint, universe, levels) =>
+        {
+            asked.Enqueue((endpoint, universe));
+
+            return 0;
+        };
+
+        // N counts inputs and outputs (spec 6.8, 11.6.2)
+        test.Inject(ManagerPacket(test, SigNetPath.Poll("local"), PollPayload(test.Tuid, test.Tuid, 0, QueryLevel.Heartbeat)));
+        var (_, heartbeat) = await NextReply(test, 0, tids => tids.Contains(Tid.RtEndpointCount));
+        Assert.Equal(new byte[] { 0, 2 }, SigNetClientTests.ReadTlvs(test.Decode(heartbeat).Packet.Payload).Single(t => t.Tid == Tid.RtEndpointCount).Value);
+
+        // A config poll of every endpoint: endpoint 1 is the output, endpoint 2 the input
+        test.Inject(ManagerPacket(test, SigNetPath.Poll("local"), PollPayload(test.Tuid, test.Tuid, PollRequest.AllEndpoints, QueryLevel.Config)));
+        var (_, first) = await NextReply(test, 1, tids => tids.Contains(Tid.EpDirection));
+        var output = SigNetClientTests.ReadTlvs(test.Decode(first).Packet.Payload);
+        Assert.Equal(new SenderId(test.Tuid, 1), test.Decode(first).Packet.SenderId);
+        Assert.Equal(new byte[] { 0x01, 0x2C }, output.Single(t => t.Tid == Tid.EpUniverse).Value);
+        Assert.Equal(new byte[] { (byte)EndpointDirection.Supplier }, output.Single(t => t.Tid == Tid.EpDirection).Value);
+        // Supplies levels, no merge sources
+        Assert.Equal(new byte[] { 0, 0, 0, 0x02, 0, 0 }, output.Single(t => t.Tid == Tid.EpCapability).Value);
+
+        var (_, second) = await NextReply(test, 2, tids => tids.Contains(Tid.EpDirection));
+        var input = SigNetClientTests.ReadTlvs(test.Decode(second).Packet.Payload);
+        Assert.Equal(new byte[] { 0, 5 }, input.Single(t => t.Tid == Tid.EpUniverse).Value);
+        Assert.Equal(new byte[] { (byte)EndpointDirection.Consumer }, input.Single(t => t.Tid == Tid.EpDirection).Value);
+        Assert.Equal(new byte[] { 0, 0, 0, 0x01, 0, 4 }, input.Single(t => t.Tid == Tid.EpCapability).Value);
+
+        // Foldback and sources are only answered on the input
+        var (_, tlvs) = await Get(this, test, 1, "09010000" + "FF030000" + "FF040000");
+        Assert.Equal(new[] { Tid.EpUniverse }, tlvs.Select(t => t.Tid));
+        (_, tlvs) = await Get(this, test, 2, "FF030000" + "FF040000");
+        Assert.Equal(new[] { Tid.DgSource, Tid.DgLevelFoldback }, tlvs.Select(t => t.Tid));
+        Assert.Equal(new[] { ((ushort)2, (ushort)5) }, asked.ToArray());
+    }
+
+    [Fact]
     public async Task SetWithOneChangingValue_IsRefusedAsAWhole()
     {
         using var test = new TestClient(NodeInfo);
