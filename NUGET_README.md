@@ -55,6 +55,8 @@ Received packets are reused once the writer returns; keep `packet.Clone()` if yo
 - `JoinUniverse()` / `DropUniverse()`: receive a universe as input
 - `JoinUniverseForTrigger()` / `DropUniverseForTrigger()`: receive a universe for triggers
 - `OnUniverseLost`, `OnSecurityEvent`, `GetVerifyCounts()`: monitoring
+- `SigNetEndpointInfo.Output()` / `Input()` in `SigNetDeviceInfo.Endpoints`: declare the
+  universes you send and receive; `Endpoints` shows how they are numbered 1..N
 - `LevelFoldback`: supplies each endpoint's merged levels for TID_DG_LEVEL_FOLDBACK
 - `LevelRefreshPolicy`: the spec 10.6.3 repeat and 1 Hz keep-alive rules
 - `SigNetBeacon`: Beacon Mode for a device that is not onboarded yet

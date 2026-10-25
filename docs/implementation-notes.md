@@ -23,6 +23,7 @@ Layer 1 of [sig-net-plan.md](sig-net-plan.md).
 | Receive side of the Node role | 10.6, 10.6.4, 10.7.2 | `SigNetClient.Receive.cs` |
 | TID_DG_LEVEL_FOLDBACK, TID_DG_SOURCE | 11.8.3, 11.8.4 | `SigNetClient.Discovery.cs`, `SigNetClient.Receive.cs`, `LevelFoldbackProvider.cs` |
 | ASCII and UTF-8 labels | 11.6.5, 11.6.11, 11.7.2 | `Model/Payloads.cs` (`TextPayload`) |
+| Data endpoint numbering 1..N, endpoint lanes | 6.8, 8.6.2, 11.6.2 | `SigNetEndpointTable.cs`, `SigNetClient.Send.cs` |
 | IPv6 multicast mapping, IPv6 TLV forms | 9.2.3, 11.2.6, 11.7.3, Appendix A | `SigNetMulticast.cs`, `Model/Payloads.cs`, `Model/TidCatalogue.cs` |
 | Beacon Mode for an offboarded device | 7.2.2, 10.2.1 | `SigNetBeacon.cs` |
 
@@ -35,7 +36,7 @@ handlers rather than reshape the client.
 
 ## Verification
 
-- Unit tests (185, net10.0) include the Appendix G vectors: K0, Ks, Kc,
+- Unit tests (197, net10.0) include the Appendix G vectors: K0, Ks, Kc,
   Km_global, Km_local, the 51-byte HMAC input and the HMAC tag. Appendix G
   has no complete datagram, so `CoapCodecTests` checks a hand-assembled
   CoAP encoding of the Appendix G packet as well. The SDK README's second
@@ -72,11 +73,35 @@ handlers rather than reshape the client.
   loads, increments and saves before anything is sent and throws
   `SessionIdExhaustedException` at the limit. A lane wrap advances and
   persists the session the same way.
+- **Endpoints.** One table numbers every TID_LEVEL data endpoint 1 to N
+  with no gaps (spec 6.8, 8.6.2), inputs and outputs alike, and
+  TID_RT_ENDPOINT_COUNT reports N. The host declares both in
+  `SigNetDeviceInfo.Endpoints`: `SigNetEndpointInfo.Output(universe, label)`
+  for a universe it sends (`EndpointDirection.Supplier`,
+  `EndpointCapabilities.SupplyLevel`), `SigNetEndpointInfo.Input(universe,
+  label)` or the constructor for one it receives. `SigNetEndpointTable`
+  numbers the outputs sorted by universe first, then the inputs sorted by
+  universe (equal universes keep their declaration order), so universes 1,
+  2000 and 60000 are endpoints 1, 2 and 3. Outputs first keeps a console's
+  numbering independent of its inputs. A universe passed to `SendLevels`
+  that was not declared as an output takes the next free endpoint, N+1, on
+  first use, so an incomplete list never stops sending. Two outputs on one
+  universe are rejected; an input and an output on the same universe are two
+  endpoints. `SigNetClient.Endpoints` is the current table.
+- **Renumbering.** Replacing `SigNetClient.DeviceInfo` rebuilds the table.
+  Outputs that are still being sent but no longer declared keep an endpoint
+  after the declared ones, in their previous order; stopped ones are
+  dropped. An active output whose endpoint changes is announced as a
+  TID_UNIVERSE Leave on the old endpoint and a Join on the new one. Sequence
+  counters belong to the endpoint number, not the universe, so each
+  Sender-ID's sequence keeps rising across a renumbering.
 - **Lanes.** Lane 0 carries poll replies, announcements, security events and
-  sync. Each universe's levels use the universe number as the Sender
-  endpoint. A data endpoint's poll and GET replies use that endpoint number.
-  Packets are sharded by lane, so each lane stays ordered on the wire with
-  several sender threads.
+  sync. Each output universe's levels use its endpoint as the Sender
+  endpoint, and TID_UNIVERSE carries that endpoint as the originating Sender
+  Endpoint. A data endpoint's poll and GET replies use that endpoint number
+  too. Packets are sharded by lane, so each lane stays ordered on the wire
+  with several sender threads. Timecode and OSC streams would take
+  endpoints N+1 onwards (8.6.2); the library sends neither.
 - **Sync spacing.** TID_SYNC is a HighPerfComm barrier packet, and the
   sender thread holds it until 5 ms after the last level datagram was handed
   to a socket, so the gap holds on the wire, not just at queue time.
@@ -98,12 +123,13 @@ handlers rather than reshape the client.
   priority and timestamps it needs. Stream loss after 3 s is an event only.
 - **Level foldback.** TID_DG_LEVEL_FOLDBACK is mandated for a Node with
   data endpoints, but the merged output lives in the application, so the
-  host sets `SigNetClient.LevelFoldback` (a `LevelFoldbackProvider`) to copy
-  an endpoint's current levels. Without a provider the TID is neither
+  host sets `SigNetClient.LevelFoldback` (a `LevelFoldbackProvider`, called
+  with the endpoint number and its universe) to copy an input endpoint's
+  current levels. Output endpoints do not answer it. Without a provider the TID is neither
   advertised in TID_RT_SUPPORTED_TIDS nor answered. A provider returning 0
   slots is answered with a single 0, never a zero-length value.
-- **Sources.** TID_DG_SOURCE is answered by the library from its receive
-  state: every Sender-ID streaming the endpoint's universe that has not timed
+- **Sources.** TID_DG_SOURCE is answered on input endpoints by the library
+  from its receive state: every Sender-ID streaming the endpoint's universe that has not timed
   out (3 s), with its universe priority (the Constrained Node Fallback, so
   slot 1's priority), its level packets per second over the last one-second
   window (the rate so far, over at least a second, until the first window
@@ -164,13 +190,13 @@ What each change in the V1.15 and V1.16 revision history means here:
 | IPv6 multicast FF18::7369:, folding, MLD (9.2.3, 9.5, Appendix A) | Yes | Address mapping only; the transport is IPv4 |
 | TID_UNIVERSE 9 or 21 bytes (11.2.6) | Yes | Both lengths valid and decoded; the IPv4 form is sent |
 | TID_EP_MULT_OVERRIDE 4 or 16 bytes (11.7.3) | Yes | Both lengths valid; the 4-byte form is reported |
-| Sender Endpoint IDs 0x0001 to 0xFF00, timecode and OSC streams from N+1 (8.6.2) | Clarification | Universe lanes stay within 0x0001 to 0xFF00; see open question 6 for the TID_LEVEL part |
+| Sender Endpoint IDs 0x0001 to 0xFF00, timecode and OSC streams from N+1 (8.6.2) | Clarification | Level streams use their output endpoint 1..N (Endpoints above); no timecode or OSC streams |
 | Proprietary TIDs 0x8000 to 0xFF00, 0xFF01 to 0xFFFF standard diagnostics (10.1.2, 11) | Yes | Already so: `Tid.IsManufacturerTid` stops at 0xFF00 |
 | `<timecode_lost_timeout>` 3 s, `<node_lost_timeout>` in poll cycles (10.8.2, Appendix B) | Timing | Timecode is not implemented; Lost Mode already counts 3 poll cycles of 3 s |
 | HMAC note: leading slash in the reconstructed URI, big-endian TIDs (21.4) | No | Already so; the Appendix G vectors cover both |
 | TID_DG_LEVEL_FOLDBACK reports an endpoint, not a universe (11.8.3) | No | Answered per endpoint from `LevelFoldback` |
 | TID_DG_SOURCE 0xFF04, one TLV per active source (11.8.4) | Yes | Answered from the receive state (Sources above) |
-| V1.16: TID_RT_ENDPOINT_COUNT counts only the TID_LEVEL endpoints 1..N, contiguous on every Device; other data endpoints from N+1 (6.8, 6.8.1, 6.8.2, 8.6.2, 11.6.2) | Clarification | `SigNetDeviceInfo.Endpoints` are the TID_LEVEL endpoints; see open question 6 |
+| V1.16: TID_RT_ENDPOINT_COUNT counts only the TID_LEVEL endpoints 1..N, contiguous on every Device; other data endpoints from N+1 (6.8, 6.8.1, 6.8.2, 8.6.2, 11.6.2) | Clarification | One table of input and output endpoints, N reported (Endpoints above; open question 6 resolved) |
 | V1.16: SoemCode unique per product (6.5) | No | Documented on `SigNetDeviceInfo.SoemCode` |
 | V1.16: TID_RDM_TOD_DATA is sent by Nodes only (11.3.4) | No | RDM is not implemented |
 
@@ -183,8 +209,8 @@ endpoint consumes TID_LEVEL, which is what the library follows.
 Each one is also a `TODO (spec x.y)` comment in the code. Checked against
 the reference C++ SDK (v0.7) and the Sig-Net Discord (#spec-feedback and
 #snactest) in October 2026; what those show is noted per question.
-Re-checked against V1.16: none is resolved; V1.16 narrows question 6, and
-the sections behind the others are unchanged. The SDK
+Re-checked against V1.16: it resolves question 6, and the sections behind
+the others are unchanged. The SDK
 has no TID_SYNC handling, bootstrap window, idle-repeat logic or
 TID_UNIVERSE, so questions 1, 8, 9 and 13 cannot be checked against it, and
 none of the four has come up on the Discord.
@@ -219,21 +245,14 @@ none of the four has come up on the Discord.
    "Valid SET with no State Change" path and is echoed with a trailing
    TID_SET_REPLY carrying the unchanged CHANGE_COUNT; SNACtest test 1348
    checks exactly that on TID_RT_DEVICE_LABEL.
-6. **Endpoint numbering (6.8.2 vs 8.6.2).** Data endpoints are 1..N, Sender
-   lanes 1..63999. TID_RT_ENDPOINT_COUNT reports only the Node endpoints, so
-   a pure Sender reports 0, and Node endpoint n shares a sequence lane with
-   universe n's level stream. V1.16 settles part of this: TID_LEVEL data
-   endpoints are 1..N on every Device (not only Nodes), TID_RT_ENDPOINT_COUNT
-   reports N, and a stream carrying TID_LEVEL "shall use their corresponding
-   Data Endpoint" while timecode and OSC streams take N+1 onwards (Sender
-   Endpoint IDs 0x0001 to 0xFF00). Read literally, a console sending
-   universes 1, 500 and 2000 has data endpoints 1 to 3, sends each universe
-   on its endpoint's lane and reports 3, where this library sends on lanes
-   1, 500 and 2000 and reports 0. Not changed yet: it needs a universe to
-   endpoint mapping on the Sender API, it changes the lanes MagnusEngine's
-   streams use, and a Device that both sends and receives would have to
-   number its sending and receiving endpoints in one 1..N range. Receivers
-   are unaffected either way, since they key on the full Sender-ID.
+6. **Endpoint numbering (6.8.2 vs 8.6.2). Resolved by V1.16.** Data
+   endpoints were 1..N while a Sender's level lanes used the universe
+   (1..63999), so a pure Sender reported 0 and Node endpoint n shared a lane
+   with universe n's level stream. V1.16 makes TID_LEVEL data endpoints 1..N
+   on every Device, has each TID_LEVEL stream use its Data Endpoint, and
+   reports N in TID_RT_ENDPOINT_COUNT. The library now numbers inputs and
+   outputs in one table and sends each output universe on its endpoint's
+   lane (Endpoints, Renumbering and Lanes above).
 7. **Security event codes (11.8.1).** 0x0002 "Replay Attack Detected"
    overlaps 0x0005, 0x0006 and 0x0007. The SDK defines only 0x0001 to
    0x0004 and reports every freshness failure, including a full replay

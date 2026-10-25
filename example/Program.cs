@@ -70,7 +70,12 @@ public class Program
             Roles = SigNetRoles.Sender | SigNetRoles.Node,
             FirmwareVersionId = 0x00010000,
             FirmwareVersion = typeof(SigNetClient).Assembly.GetName().Version?.ToString() ?? "0.0",
-            Endpoints = [new SigNetEndpointInfo(universe, $"Universe {universe} in")]
+            // Numbered by the client: the output is endpoint 1, the input endpoint 2
+            Endpoints =
+            [
+                SigNetEndpointInfo.Output(universe, $"Universe {universe} out"),
+                SigNetEndpointInfo.Input(universe, $"Universe {universe} in")
+            ]
         };
 
         var frames = new ConcurrentDictionary<(SenderId, ushort), (long Count, ReceiveDataPacket Last)>();
