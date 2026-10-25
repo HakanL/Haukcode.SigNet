@@ -126,7 +126,7 @@ public partial class SigNetClient
 
             var announcements = new List<UniverseAnnouncement>(this.activeUniverses.Count);
             foreach (ushort universe in this.activeUniverses)
-                announcements.Add(new UniverseAnnouncement(universe, UniverseCommand.Join, null, universe));
+                announcements.Add(new UniverseAnnouncement(universe, UniverseCommand.Join, null, GetOutputEndpointLocked(universe)));
 
             QueueUniverseAnnouncementLocked(announcements);
         }
@@ -184,7 +184,7 @@ public partial class SigNetClient
         WritePollReply(ref writer, info);
         writer.WriteByte(Tid.RtProtocolVersion, SigNetUri.ProtocolVersion);
         writer.WriteUInt32(Tid.RtRoleCapability, (uint)info.Roles);
-        writer.WriteUInt16(Tid.RtEndpointCount, (ushort)info.Endpoints.Count);
+        writer.WriteUInt16(Tid.RtEndpointCount, (ushort)this.endpointTable.Count);
         writer.WriteByte(Tid.RtMultOverride, 0x00);
 
         return writer.Written.ToArray();
@@ -388,7 +388,7 @@ public partial class SigNetClient
 
     private List<ushort> GetReplyEndpoints(ushort endpoint)
     {
-        int count = this.deviceInfo.Endpoints.Count;
+        int count = this.endpointTable.Count;
         var result = new List<ushort>();
 
         if (endpoint == PollRequest.AllEndpoints)
@@ -488,17 +488,14 @@ public partial class SigNetClient
 
     private void AddTlvs(List<(ushort, byte[])> items, ushort tid, ushort endpoint, SigNetDeviceInfo info)
     {
-        var endpointInfo = endpoint > 0 && endpoint <= info.Endpoints.Count ? info.Endpoints[endpoint - 1] : null;
+        var table = this.endpointTable;
+        var endpointInfo = table.Get(endpoint);
 
         switch (tid)
         {
             case Tid.RtEndpointCount:
-                // TODO (spec 6.8, 8.6.2): since V1.16 this counts the Device's TID_LEVEL data
-                // endpoints 1..N, and a Sender's TID_LEVEL streams use those endpoints as their
-                // lanes. This library still uses the universe as a level stream's lane and counts
-                // only the Node endpoints from SigNetDeviceInfo, so a pure Sender reports 0, and a
-                // Node endpoint n shares its sequence lane with universe n's level stream.
-                items.Add((tid, UInt16Bytes((ushort)info.Endpoints.Count)));
+                // N: the TID_LEVEL data endpoints, inputs and outputs (spec 6.8, 11.6.2)
+                items.Add((tid, UInt16Bytes((ushort)table.Count)));
                 break;
 
             case Tid.RtMultOverride:
@@ -519,7 +516,7 @@ public partial class SigNetClient
                 break;
 
             case Tid.RtSupportedTids:
-                items.Add((tid, GetSupportedTids(info)));
+                items.Add((tid, GetSupportedTids()));
                 break;
 
             case Tid.RtProtocolVersion:
@@ -586,7 +583,7 @@ public partial class SigNetClient
                 break;
 
             case Tid.EpStatus when endpointInfo != null:
-                items.Add((tid, UInt32Bytes(GetEndpointStatus(endpointInfo.Universe))));
+                items.Add((tid, UInt32Bytes(endpointInfo.IsOutput ? GetOutputStatus(endpointInfo.Universe) : GetEndpointStatus(endpointInfo.Universe))));
                 break;
 
             case Tid.EpFailover when endpointInfo != null:
@@ -610,27 +607,28 @@ public partial class SigNetClient
                 items.Add((tid, [0x00]));
                 break;
 
-            case Tid.DgLevelFoldback when endpointInfo != null && LevelFoldback is { } foldback:
+            // The foldback and source reports are about what an input endpoint receives
+            case Tid.DgLevelFoldback when endpointInfo is { IsOutput: false } && LevelFoldback is { } foldback:
             {
                 var levels = new byte[512];
-                int count = Math.Clamp(foldback(endpoint, levels), 0, levels.Length);
+                int count = Math.Clamp(foldback(endpoint, endpointInfo.Universe, levels), 0, levels.Length);
 
                 // An empty or uninitialised buffer is a single 0, never a zero-length value (spec 11.8.3)
                 items.Add((tid, count == 0 ? [0x00] : levels[..count]));
                 break;
             }
 
-            case Tid.DgSource when endpointInfo != null:
+            case Tid.DgSource when endpointInfo is { IsOutput: false }:
                 AddSourceTlvs(items, endpointInfo.Universe);
                 break;
         }
     }
 
-    private byte[] GetSupportedTids(SigNetDeviceInfo info)
+    private byte[] GetSupportedTids()
     {
         var tids = new List<ushort> { Tid.Poll, Tid.PollReply, Tid.Level, Tid.Priority, Tid.Sync, Tid.Universe };
         tids.AddRange(rootTids);
-        if (info.Endpoints.Count > 0)
+        if (this.endpointTable.Count > 0)
             tids.AddRange(DataTids);
 
         var value = new byte[tids.Count * 2];

@@ -70,17 +70,44 @@ public enum EndpointDirection : byte
 }
 
 /// <summary>
-/// A data endpoint as reported, read-only, to Managers (spec 11.7). The library does not accept
-/// SET commands, so these are fixed for the life of the client unless the host replaces
+/// A data endpoint as reported, read-only, to Managers (spec 11.7): an input (a universe this
+/// device receives) or, with <see cref="EndpointDirection.Supplier"/>, an output (a universe it
+/// sends). The client numbers them, see <see cref="SigNetEndpointTable"/>. The library does not
+/// accept SET commands, so these are fixed for the life of the client unless the host replaces
 /// <see cref="SigNetClient.DeviceInfo"/>.
 /// </summary>
 public sealed record SigNetEndpointInfo
 {
+    /// <summary>
+    /// An input endpoint: consumes TID_LEVEL, <see cref="EndpointDirection.Consumer"/>.
+    /// </summary>
     public SigNetEndpointInfo(ushort universe, string label)
     {
         Universe = universe;
         Label = label;
     }
+
+    /// <summary>
+    /// An input endpoint: a universe this device receives.
+    /// </summary>
+    public static SigNetEndpointInfo Input(ushort universe, string label) => new(universe, label);
+
+    /// <summary>
+    /// An output endpoint: a universe this device sends, <see cref="EndpointDirection.Supplier"/>
+    /// with <see cref="EndpointCapabilities.SupplyLevel"/>.
+    /// </summary>
+    public static SigNetEndpointInfo Output(ushort universe, string label) => new(universe, label)
+    {
+        Capabilities = EndpointCapabilities.SupplyLevel,
+        Direction = EndpointDirection.Supplier,
+        MaxMergeSources = 0
+    };
+
+    /// <summary>
+    /// True for an output (<see cref="EndpointDirection.Supplier"/>): its universe's level stream
+    /// is sent on this endpoint's lane.
+    /// </summary>
+    public bool IsOutput => Direction == EndpointDirection.Supplier;
 
     /// <summary>
     /// TID_EP_UNIVERSE: 1 to 63,999, or 0 when not patched.
@@ -95,7 +122,8 @@ public sealed record SigNetEndpointInfo
     public EndpointCapabilities Capabilities { get; init; } = EndpointCapabilities.ConsumeLevel;
 
     /// <summary>
-    /// TID_EP_CAPABILITY bytes 4-5; at least 4 for an endpoint that consumes levels (spec 10.6).
+    /// TID_EP_CAPABILITY bytes 4-5; at least 4 for an endpoint that consumes levels (spec 10.6),
+    /// reported as 0 for one that does not.
     /// </summary>
     public ushort MaxMergeSources { get; init; } = 4;
 
@@ -169,9 +197,11 @@ public sealed record SigNetDeviceInfo
     public ushort ChangeCount { get; init; }
 
     /// <summary>
-    /// Data endpoints 1 to N, reported read-only. Empty for a pure Sender. These are the
-    /// TID_LEVEL endpoints counted in TID_RT_ENDPOINT_COUNT (spec 6.8); a timecode or OSC
-    /// endpoint would be numbered from N+1 and not listed here.
+    /// The declared data endpoints, inputs and outputs, in any order. The client numbers them 1
+    /// to N (outputs by universe, then inputs by universe, see <see cref="SigNetEndpointTable"/>)
+    /// and reports N in TID_RT_ENDPOINT_COUNT (spec 6.8). An output universe sent without being
+    /// declared here is numbered on first use, after these. All are TID_LEVEL endpoints; a
+    /// timecode or OSC endpoint would be numbered from N+1.
     /// </summary>
     public IReadOnlyList<SigNetEndpointInfo> Endpoints { get; init; } = [];
 }

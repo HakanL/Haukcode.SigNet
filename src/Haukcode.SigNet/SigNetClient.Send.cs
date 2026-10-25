@@ -25,10 +25,10 @@ public partial class SigNetClient
     // sequence numbers is the order on the send queue.
     private readonly object sendLock = new();
 
-    // Per-lane sequence counters indexed by Sender endpoint: 0 for admin, the universe number for
-    // its level stream (spec 8.6.2: one lane per stream, endpoints 0x0001 to 0xFF00).
-    // TODO (spec 8.6.2): V1.16 has TID_LEVEL streams use the Device's data endpoints 1..N rather
-    // than the universe; see TID_RT_ENDPOINT_COUNT in SigNetClient.Discovery.cs
+    // Per-lane sequence counters indexed by Sender endpoint: 0 for admin, data endpoint 1..N for
+    // an output universe's level stream and for a data endpoint's replies (spec 8.6.2). Counters
+    // stay with the endpoint number when the table is renumbered, so every Sender-ID's sequence
+    // keeps rising.
     private readonly uint[] laneSequence = new uint[ushort.MaxValue + 1];
     private uint sessionId;
     private bool sessionExhausted;
@@ -85,8 +85,10 @@ public partial class SigNetClient
 
     /// <summary>
     /// Send one frame of levels to a universe: TID_PRIORITY (when given) before TID_LEVEL in one
-    /// packet (spec 10.6), to the universe's folded multicast group, signed with Ks. The first
-    /// frame for a universe also announces it with TID_UNIVERSE (spec 11.2.6).
+    /// packet (spec 10.6), to the universe's folded multicast group, signed with Ks, on the lane
+    /// of the universe's output endpoint (spec 8.6.2). A universe not declared as an output in
+    /// <see cref="DeviceInfo"/> gets the next free endpoint on first use. The first frame for a
+    /// universe also announces it with TID_UNIVERSE (spec 11.2.6).
     ///
     /// Pacing is the caller's: at most 44 frames per second by default, three identical frames
     /// when the data stops changing, then a full keep-alive frame at least once a second
@@ -134,13 +136,14 @@ public partial class SigNetClient
 
         lock (this.sendLock)
         {
+            ushort endpoint = GetOutputEndpointLocked(universe);
             if (this.activeUniverses.Add(universe))
-                QueueUniverseAnnouncementLocked([new UniverseAnnouncement(universe, UniverseCommand.Join, null, universe)]);
+                QueueUniverseAnnouncementLocked([new UniverseAnnouncement(universe, UniverseCommand.Join, null, endpoint)]);
 
-            NextSequenceLocked(universe, out uint session, out uint sequence);
+            NextSequenceLocked(endpoint, out uint session, out uint sequence);
 
             this.pendingPath = SigNetPath.Level(Scope, universe);
-            this.pendingHeader = new SigNetSecurityHeader(SecurityMode.HmacSha256, new SenderId(Tuid, universe), 0, session, sequence);
+            this.pendingHeader = new SigNetSecurityHeader(SecurityMode.HmacSha256, new SenderId(Tuid, endpoint), 0, session, sequence);
             this.pendingMessageId = ++this.messageId;
             this.pendingLevels = levels;
             this.pendingSlotPriorities = slotPriorities;
@@ -151,7 +154,77 @@ public partial class SigNetClient
             int payloadLength = TlvReader.HeaderLength + levels.Length +
                 (slotPriorities.IsEmpty ? (universePriority.HasValue ? TlvReader.HeaderLength + 1 : 0) : TlvReader.HeaderLength + slotPriorities.Length);
 
-            return QueuePacket(SigNetPacketWriter.GetMaxLength(payloadLength), important, this.pendingSendDataFactory, this.levelPacketWriter, shardKey: universe).AsTask();
+            return QueuePacket(SigNetPacketWriter.GetMaxLength(payloadLength), important, this.pendingSendDataFactory, this.levelPacketWriter, shardKey: endpoint).AsTask();
+        }
+    }
+
+    /// <summary>
+    /// The output endpoint of a universe, numbering it at N+1 if it was not declared (spec 8.6.2),
+    /// so an incomplete endpoint list never stops sending. Called under sendLock.
+    /// </summary>
+    private ushort GetOutputEndpointLocked(ushort universe)
+    {
+        var table = this.endpointTable;
+        if (!table.TryGetOutputEndpoint(universe, out ushort endpoint))
+        {
+            table = table.WithUndeclaredOutput(universe);
+            this.endpointTable = table;
+            table.TryGetOutputEndpoint(universe, out endpoint);
+        }
+
+        return endpoint;
+    }
+
+    // TID_EP_STATUS of an output endpoint: bit 0 while its universe is being sent (spec 11.7.7)
+    private uint GetOutputStatus(ushort universe)
+    {
+        lock (this.sendLock)
+        {
+            return this.activeUniverses.Contains(universe) ? 0x01u : 0u;
+        }
+    }
+
+    /// <summary>
+    /// Renumber the endpoints for new device info. Active outputs that are no longer declared keep
+    /// an endpoint after the declared ones, in their previous order. An active output whose
+    /// endpoint changes is announced as a Leave on the old endpoint and a Join on the new one.
+    /// </summary>
+    private void ReplaceDeviceInfo(SigNetDeviceInfo value)
+    {
+        lock (this.sendLock)
+        {
+            var previous = this.endpointTable;
+            var stillSent = new List<ushort>();
+            foreach (var endpoint in previous.Endpoints)
+            {
+                if (endpoint.Info.IsOutput && this.activeUniverses.Contains(endpoint.Info.Universe))
+                    stillSent.Add(endpoint.Info.Universe);
+            }
+
+            // Throws before anything changes if the new endpoints are invalid
+            var table = SigNetEndpointTable.Create(value.Endpoints, stillSent);
+
+            var leaves = new List<UniverseAnnouncement>();
+            var joins = new List<UniverseAnnouncement>();
+            foreach (ushort universe in this.activeUniverses)
+            {
+                previous.TryGetOutputEndpoint(universe, out ushort before);
+                table.TryGetOutputEndpoint(universe, out ushort after);
+                if (before != after)
+                {
+                    leaves.Add(new UniverseAnnouncement(universe, UniverseCommand.Leave, null, before));
+                    joins.Add(new UniverseAnnouncement(universe, UniverseCommand.Join, null, after));
+                }
+            }
+
+            this.deviceInfo = value;
+            this.endpointTable = table;
+
+            if (leaves.Count > 0 && IsOperational)
+            {
+                QueueUniverseAnnouncementLocked(leaves);
+                QueueUniverseAnnouncementLocked(joins);
+            }
         }
     }
 
@@ -165,7 +238,7 @@ public partial class SigNetClient
         lock (this.sendLock)
         {
             if (this.activeUniverses.Remove(universe) && IsOperational)
-                QueueUniverseAnnouncementLocked([new UniverseAnnouncement(universe, UniverseCommand.Leave, null, universe)]);
+                QueueUniverseAnnouncementLocked([new UniverseAnnouncement(universe, UniverseCommand.Leave, null, GetOutputEndpointLocked(universe))]);
         }
     }
 
@@ -183,7 +256,7 @@ public partial class SigNetClient
 
             var announcements = new List<UniverseAnnouncement>(this.activeUniverses.Count);
             foreach (ushort universe in this.activeUniverses)
-                announcements.Add(new UniverseAnnouncement(universe, UniverseCommand.Leave, null, universe));
+                announcements.Add(new UniverseAnnouncement(universe, UniverseCommand.Leave, null, GetOutputEndpointLocked(universe)));
 
             this.activeUniverses.Clear();
 

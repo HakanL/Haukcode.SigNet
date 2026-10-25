@@ -54,7 +54,8 @@ public class SigNetClientTests
         Assert.Equal(new byte[] { 1, 2, 3, 255 }, frame.Levels.ToArray());
         Assert.Equal(150, frame.Priority);
         Assert.True(frame.HasPriority);
-        Assert.Equal(new SenderId(test.Tuid, 7), frame.SenderId);
+        // Universe 7 is not declared, so it takes the first free endpoint as its lane
+        Assert.Equal(new SenderId(test.Tuid, 1), frame.SenderId);
         Assert.Equal(42U, frame.SessionId);
         Assert.Equal(1U, frame.SequenceNumber);
         Assert.False(frame.Synchronized);
@@ -62,7 +63,7 @@ public class SigNetClientTests
     }
 
     [Fact]
-    public async Task SendLevels_PacksPriorityBeforeLevelOnTheUniverseLane()
+    public async Task SendLevels_PacksPriorityBeforeLevelOnTheEndpointLane()
     {
         using var test = new TestClient();
 
@@ -73,7 +74,8 @@ public class SigNetClientTests
 
         var (path, packet) = test.Decode(datagram);
         Assert.Equal(SigNetPath.Level("local", 110), path);
-        Assert.Equal(new SenderId(test.Tuid, 110), packet.SenderId);
+        // The universe's output endpoint is the lane, not the universe (spec 8.6.2)
+        Assert.Equal(new SenderId(test.Tuid, 1), packet.SenderId);
 
         var tlvs = ReadTlvs(packet.Payload);
         Assert.Equal(new[] { Tid.Priority, Tid.Level }, tlvs.Select(t => t.Tid));
@@ -226,8 +228,9 @@ public class SigNetClientTests
             return announcements.Count >= 2;
         });
 
-        Assert.Equal(new UniverseAnnouncement(12, UniverseCommand.Join, null, 12), announcements[0]);
-        Assert.Equal(new UniverseAnnouncement(12, UniverseCommand.Leave, null, 12), announcements[1]);
+        // The originating Sender Endpoint is the universe's output endpoint
+        Assert.Equal(new UniverseAnnouncement(12, UniverseCommand.Join, null, 1), announcements[0]);
+        Assert.Equal(new UniverseAnnouncement(12, UniverseCommand.Leave, null, 1), announcements[1]);
         Assert.Empty(test.Client.ActiveUniverses);
     }
 
@@ -252,7 +255,8 @@ public class SigNetClientTests
     {
         using var test = new TestClient();
         test.Client.JoinUniverse(2);
-        test.Client.SetLaneSequenceForTest(2, 0xFFFFFFFD);
+        // Universe 2 is sent on endpoint 1
+        test.Client.SetLaneSequenceForTest(1, 0xFFFFFFFD);
 
         await test.Client.SendLevels(2, new byte[] { 1 }, destination: IPAddress.Loopback);
         await test.Client.SendLevels(2, new byte[] { 2 }, destination: IPAddress.Loopback);
@@ -341,7 +345,7 @@ public class SigNetClientTests
 
         time.Advance(TimeSpan.FromSeconds(0.2));
         var item = await Wait.For(lost);
-        Assert.Equal(new UniverseLostEvent(9, new SenderId(test.Tuid, 9)), item);
+        Assert.Equal(new UniverseLostEvent(9, new SenderId(test.Tuid, 1)), item);
     }
 
     [Fact]

@@ -270,7 +270,7 @@ public class DiscoveryTests
     {
         using var test = new TestClient(NodeInfo);
         var asked = new System.Collections.Concurrent.ConcurrentQueue<ushort>();
-        test.Client.LevelFoldback = (endpoint, levels) =>
+        test.Client.LevelFoldback = (endpoint, universe, levels) =>
         {
             asked.Enqueue(endpoint);
             if (endpoint == 2)
@@ -301,7 +301,7 @@ public class DiscoveryTests
     public async Task LevelFoldback_IsNotInPollRepliesAndCannotBeSet()
     {
         using var test = new TestClient(NodeInfo);
-        test.Client.LevelFoldback = (_, levels) =>
+        test.Client.LevelFoldback = (_, _, levels) =>
         {
             levels[0] = 1;
 
@@ -350,9 +350,10 @@ public class DiscoveryTests
         Assert.Equal(SigNetPath.Node("local", test.Tuid, 1), path);
         var source = tlvs.Single();
         Assert.Equal(Tid.DgSource, source.Tid);
-        // Sender-ID (TUID and lane 5), priority, packets per second, IPv4 address: 15 bytes (spec 11.8.4)
+        // Sender-ID (TUID and lane 3, the undeclared output after inputs 1 and 2), priority,
+        // packets per second, IPv4 address: 15 bytes (spec 11.8.4)
         Assert.Equal(15, source.Value.Length);
-        Assert.Equal(new SenderId(test.Tuid, 5), SenderId.Read(source.Value));
+        Assert.Equal(new SenderId(test.Tuid, 3), SenderId.Read(source.Value));
         Assert.Equal(120, source.Value[8]);
         Assert.True(((source.Value[9] << 8) | source.Value[10]) >= 1);
         Assert.Equal(IPAddress.Loopback, new IPAddress(source.Value.AsSpan(11, 4)));

@@ -87,6 +87,9 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
     private ITimer? housekeepingTimer;
     private volatile SigNetDeviceInfo deviceInfo;
 
+    // Numbered from deviceInfo.Endpoints plus undeclared outputs; replaced under sendLock
+    private volatile SigNetEndpointTable endpointTable;
+
     private Socket? listenSocket;
 
     // Linux only: IGMP memberships live on separate sockets so the listen socket's own membership
@@ -113,7 +116,7 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
     /// once this returns: process it here or keep <see cref="ReceiveDataPacket.Clone"/>.
     /// </param>
     /// <param name="scope">The URI scope (spec 8.2), "local" by default.</param>
-    /// <param name="senderCount">Sender threads and sockets; packets are sharded by sender lane (the universe for levels).</param>
+    /// <param name="senderCount">Sender threads and sockets; packets are sharded by sender lane (the output endpoint for levels).</param>
     /// <param name="multicastLoopback">Deliver our own multicast to sockets on this host (tests, loopback demos).</param>
     /// <param name="replayTableCapacity">Sender-ID records to track, at least 32 (spec 8.6 step 10c).</param>
     public SigNetClient(
@@ -137,6 +140,7 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
         Tuid = tuid;
         Scope = scope;
         this.deviceInfo = deviceInfo;
+        this.endpointTable = SigNetEndpointTable.Create(deviceInfo.Endpoints);
         this.sessionIdStore = sessionIdStore;
         this.relay = relay;
         this.timeProvider = timeProvider ?? TimeProvider.System;
@@ -193,6 +197,8 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(deviceInfo);
         ArgumentNullException.ThrowIfNull(sessionIdStore);
+        // Throws for duplicate output universes or too many endpoints
+        SigNetEndpointTable.Create(deviceInfo.Endpoints);
         ArgumentNullException.ThrowIfNull(localAddress);
         SigNetUri.CheckScope(scope);
         if (tuid.IsReserved)
@@ -211,7 +217,10 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
 
     /// <summary>
     /// What discovery replies report. Replace it (records are immutable) when a label or endpoint
-    /// changes; the host owns CHANGE_COUNT.
+    /// changes; the host owns CHANGE_COUNT. Replacing it renumbers the endpoints (see
+    /// <see cref="Endpoints"/>); an active output universe whose endpoint changes is announced
+    /// with TID_UNIVERSE Leave on the old endpoint and Join on the new one, and continues on the
+    /// new endpoint's lane.
     /// </summary>
     public SigNetDeviceInfo DeviceInfo
     {
@@ -222,9 +231,17 @@ public partial class SigNetClient : Client<SigNetClient.SendData, ReceiveDataPac
             if (value.SoemCode != this.deviceInfo.SoemCode)
                 throw new ArgumentException("The SoemCode cannot change while running", nameof(value));
 
-            this.deviceInfo = value;
+            ReplaceDeviceInfo(value);
         }
     }
+
+    /// <summary>
+    /// The data endpoints as numbered 1 to N (spec 6.8, 8.6.2): the declared outputs sorted by
+    /// universe, then the declared inputs sorted by universe, then outputs sent without being
+    /// declared, in order of first use. A snapshot; it is replaced when <see cref="DeviceInfo"/>
+    /// changes or an undeclared output is first sent.
+    /// </summary>
+    public SigNetEndpointTable Endpoints => this.endpointTable;
 
     /// <summary>
     /// The receive-side anti-replay table, e.g. to <see cref="ReplayProtection.Forget"/> a device
